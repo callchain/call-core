@@ -14,14 +14,6 @@ pub enum TxType {
     AccountSet = 5,
     SetRegularKey = 6,
     SignerListSet = 7,
-    EscrowCreate = 8,
-    EscrowFinish = 9,
-    EscrowCancel = 10,
-    PaymentChannelCreate = 11,
-    PaymentChannelFund = 12,
-    PaymentChannelClaim = 13,
-    TicketCreate = 14,
-    TicketCancel = 15,
 }
 
 impl TxType {
@@ -40,14 +32,6 @@ impl TxType {
             5 => Some(Self::AccountSet),
             6 => Some(Self::SetRegularKey),
             7 => Some(Self::SignerListSet),
-            8 => Some(Self::EscrowCreate),
-            9 => Some(Self::EscrowFinish),
-            10 => Some(Self::EscrowCancel),
-            11 => Some(Self::PaymentChannelCreate),
-            12 => Some(Self::PaymentChannelFund),
-            13 => Some(Self::PaymentChannelClaim),
-            14 => Some(Self::TicketCreate),
-            15 => Some(Self::TicketCancel),
             _ => None,
         }
     }
