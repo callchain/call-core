@@ -258,6 +258,51 @@ pub mod sf {
     }
 }
 
+/// PathStep represents a single step in a payment path
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PathStep {
+    pub account: Option<AccountID>,
+    pub currency: Option<Currency>,
+    pub issuer: Option<AccountID>,
+}
+
+impl PathStep {
+    pub fn new() -> Self {
+        Self {
+            account: None,
+            currency: None,
+            issuer: None,
+        }
+    }
+
+    pub fn with_account(mut self, account: AccountID) -> Self {
+        self.account = Some(account);
+        self
+    }
+
+    pub fn with_currency(mut self, currency: Currency) -> Self {
+        self.currency = Some(currency);
+        self
+    }
+
+    pub fn with_issuer(mut self, issuer: AccountID) -> Self {
+        self.issuer = Some(issuer);
+        self
+    }
+}
+
+impl Default for PathStep {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Path represents a sequence of steps for a payment
+pub type Path = Vec<PathStep>;
+
+/// PathSet represents multiple possible paths
+pub type PathSet = Vec<Path>;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum STValue {
     Object(STObject),
@@ -272,7 +317,7 @@ pub enum STValue {
     Amount(Amount),
     VL(Vec<u8>),
     Account(AccountID),
-    PathSet(Vec<Vec<PathStep>>),
+    PathSet(PathSet),
     Vector256(Vec<UInt256>),
 }
 
@@ -355,13 +400,6 @@ impl Amount {
         result.mantissa = -result.mantissa;
         result
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct PathStep {
-    pub account: Option<AccountID>,
-    pub currency: Option<Currency>,
-    pub issuer: Option<AccountID>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
