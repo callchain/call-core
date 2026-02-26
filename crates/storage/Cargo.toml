@@ -1,0 +1,17 @@
+[package]
+name = "storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+primitives = { path = "../primitives" }
+shamap = { path = "../shamap" }
+serialization = { path = "../serialization" }
+rocksdb = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.9"
