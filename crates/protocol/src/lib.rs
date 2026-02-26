@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod dex;
 pub mod ledger;
 pub mod ledger_entries;
@@ -6,6 +7,10 @@ pub mod tx_engine;
 pub mod tx_queue;
 pub mod views;
 
+pub use bootstrap::{
+    BootstrapConfig, BootstrapManager, GenesisConfig, GenesisLoader, LedgerSynchronizer,
+    LedgerValidation, PeerDiscovery, SyncStatus, SyncStats,
+};
 pub use dex::{BookKey, Flow, Offer, OfferBook, Pathfinder, Taker};
 pub use ledger::{Fees, Ledger, LedgerIndex, LedgerInfo, OpenView, ReadView};
 pub use ledger_entries::{
