@@ -9,6 +9,7 @@ members = [
     "crates/consensus",
     "crates/network",
     "crates/node",
+    "tests",
 ]
 resolver = "2"
 

@@ -1,0 +1,22 @@
+[package]
+name = "integration_tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+primitives = { path = "../crates/primitives" }
+protocol = { path = "../crates/protocol" }
+consensus = { path = "../crates/consensus" }
+network = { path = "../crates/network" }
+storage = { path = "../crates/storage" }
+crypto = { path = "../crates/crypto" }
+serialization = { path = "../crates/serialization" }
+shamap = { path = "../crates/shamap" }
+
+[[test]]
+name = "integration_tests"
+path = "integration_tests.rs"
+
+[[test]]
+name = "genesis_ledger"
+path = "genesis_ledger.rs"

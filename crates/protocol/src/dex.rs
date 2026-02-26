@@ -195,7 +195,7 @@ mod tests {
     fn test_offer_quality() {
         let account = AccountID::new([0u8; 20]);
         let currency1 = Currency::CALL;
-        let currency2 = Currency::from_bytes(&[1u8; 20]).unwrap();
+        let currency2 = Currency::new([1u8; 20]);
 
         let taker_gets = Amount::call(1000000);
         let taker_pays = Amount::issued(2000000, -6, currency2, account).unwrap();
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn test_offer_book() {
         let currency1 = Currency::CALL;
-        let currency2 = Currency::from_bytes(&[1u8; 20]).unwrap();
+        let currency2 = Currency::new([1u8; 20]);
 
         let mut book = OfferBook::new(currency1, currency2);
         assert!(book.get_best_offer().is_none());
