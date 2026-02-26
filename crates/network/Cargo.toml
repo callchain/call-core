@@ -1,0 +1,21 @@
+[package]
+name = "network"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+primitives = { path = "../primitives" }
+protocol = { path = "../protocol" }
+serialization = { path = "../serialization" }
+consensus = { path = "../consensus" }
+tokio = { workspace = true }
+prost = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
