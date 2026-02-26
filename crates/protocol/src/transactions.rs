@@ -1,5 +1,5 @@
-use primitives::{AccountID, UInt256};
-use serialization::STObject;
+use primitives::{AccountID, Currency, UInt256};
+use serialization::{Amount, STObject};
 
 /// Transaction type enum matching calld values
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +35,13 @@ impl TxType {
             _ => None,
         }
     }
+}
+
+/// Signer entry for SignerListSet transaction
+#[derive(Debug, Clone)]
+pub struct SignerEntry {
+    pub account: AccountID,
+    pub weight: u8,
 }
 
 /// Transaction Engine Result (TER) codes
@@ -100,8 +107,20 @@ pub enum TER {
     terLAST = -60,
     terNO_CALL = -59,
     terNO_CALL_ISSUER = -58,
+    terNO_OFFER = -57,
+    terINSUFF_FEE = -56,
     terDUPLICATE = -39,
     terFAILED = -16,
+
+    // Additional TER codes needed by engine
+    temINVALID_TRANSACTION_TYPE = -269,
+    temEMPTY_SIGNER = -260,
+    temDST_NEEDED = -278,
+    temBAD_TICK_SIZE = -255,
+    temBAD_REGULAR_KEY = -265,
+    temBAD_SIGNER_LIST = -252,
+    telINSUFFICIENT_FEE = -394,
+    tecINTERNAL = 199,
 }
 
 impl TER {
@@ -136,10 +155,40 @@ pub struct Transaction {
     pub account: AccountID,
     pub sequence: u32,
     pub fee: u64,
-    pub signing_pub_key: Vec<u8>,
-    pub txn_signature: Vec<u8>,
+    pub signing_pub_key: Option<Vec<u8>>,
+    pub txn_signature: Option<Vec<u8>>,
     pub hash: UInt256,
     pub data: STObject,
+    // Payment fields
+    pub destination: Option<AccountID>,
+    pub amount: Option<Amount>,
+    pub destination_tag: Option<u32>,
+    pub send_max: Option<Amount>,
+    // TrustSet fields
+    pub limit_amount: Option<Amount>,
+    pub issuer: Option<AccountID>,
+    pub quality_in: Option<u32>,
+    pub quality_out: Option<u32>,
+    // OfferCreate/Cancel fields
+    pub taker_pays: Option<Amount>,
+    pub taker_gets: Option<Amount>,
+    pub offer_sequence: u32,
+    pub expiration: Option<u32>,
+    // AccountSet fields
+    pub domain: Option<Vec<u8>>,
+    pub email_hash: Option<UInt256>,
+    pub message_key: Option<Vec<u8>>,
+    pub transfer_rate: Option<u32>,
+    pub tick_size: Option<u8>,
+    pub set_flag: Option<u32>,
+    pub clear_flag: Option<u32>,
+    // SetRegularKey fields
+    pub regular_key: Option<AccountID>,
+    // SignerListSet fields
+    pub signer_quorum: u32,
+    pub signers: Vec<SignerEntry>,
+    // IssueSet fields
+    pub total_supply: Option<Amount>,
 }
 
 impl Transaction {
@@ -149,11 +198,96 @@ impl Transaction {
             account,
             sequence,
             fee: 10,
-            signing_pub_key: Vec::new(),
-            txn_signature: Vec::new(),
+            signing_pub_key: None,
+            txn_signature: None,
             hash: UInt256::zero(),
             data: STObject::new(),
+            destination: None,
+            amount: None,
+            destination_tag: None,
+            send_max: None,
+            limit_amount: None,
+            issuer: None,
+            quality_in: None,
+            quality_out: None,
+            taker_pays: None,
+            taker_gets: None,
+            offer_sequence: 0,
+            expiration: None,
+            domain: None,
+            email_hash: None,
+            message_key: None,
+            transfer_rate: None,
+            tick_size: None,
+            set_flag: None,
+            clear_flag: None,
+            regular_key: None,
+            signer_quorum: 0,
+            signers: Vec::new(),
+            total_supply: None,
         }
+    }
+
+    /// Create a new payment transaction
+    pub fn new_payment(account: AccountID, destination: AccountID, amount: Amount) -> Self {
+        let mut tx = Self::new(TxType::Payment, account, 1);
+        tx.destination = Some(destination);
+        tx.amount = Some(amount);
+        tx
+    }
+
+    /// Create a new trust set transaction
+    pub fn new_trust_set(account: AccountID, limit_amount: Amount, issuer: AccountID) -> Self {
+        let mut tx = Self::new(TxType::TrustSet, account, 1);
+        tx.limit_amount = Some(limit_amount);
+        tx.issuer = Some(issuer);
+        tx
+    }
+
+    /// Create a new offer create transaction
+    pub fn new_offer_create(
+        account: AccountID,
+        taker_pays: Amount,
+        taker_gets: Amount,
+        sequence: u32,
+    ) -> Self {
+        let mut tx = Self::new(TxType::OfferCreate, account, sequence);
+        tx.taker_pays = Some(taker_pays);
+        tx.taker_gets = Some(taker_gets);
+        tx
+    }
+
+    /// Create a new offer cancel transaction
+    pub fn new_offer_cancel(account: AccountID, offer_sequence: u32, sequence: u32) -> Self {
+        let mut tx = Self::new(TxType::OfferCancel, account, sequence);
+        tx.offer_sequence = offer_sequence;
+        tx
+    }
+
+    /// Create a new account set transaction
+    pub fn new_account_set(account: AccountID, sequence: u32) -> Self {
+        Self::new(TxType::AccountSet, account, sequence)
+    }
+
+    /// Create a new set regular key transaction
+    pub fn new_set_regular_key(account: AccountID, regular_key: AccountID, sequence: u32) -> Self {
+        let mut tx = Self::new(TxType::SetRegularKey, account, sequence);
+        tx.regular_key = Some(regular_key);
+        tx
+    }
+
+    /// Create a new signer list set transaction
+    pub fn new_signer_list_set(account: AccountID, quorum: u32, sequence: u32) -> Self {
+        let mut tx = Self::new(TxType::SignerListSet, account, sequence);
+        tx.signer_quorum = quorum;
+        tx
+    }
+
+    /// Create a new issue set transaction
+    pub fn new_issue_set(account: AccountID, amount: Amount, sequence: u32) -> Self {
+        let mut tx = Self::new(TxType::IssueSet, account, sequence);
+        tx.amount = Some(amount);
+        tx
     }
 
     pub fn get_hash(&self) -> UInt256 {
@@ -181,11 +315,11 @@ impl Transaction {
     }
 
     pub fn set_signing_pub_key(&mut self, key: Vec<u8>) {
-        self.signing_pub_key = key;
+        self.signing_pub_key = Some(key);
     }
 
     pub fn set_signature(&mut self, signature: Vec<u8>) {
-        self.txn_signature = signature;
+        self.txn_signature = Some(signature);
     }
 
     pub fn set_hash(&mut self, hash: UInt256) {

@@ -1,11 +1,17 @@
 pub mod dex;
 pub mod ledger;
+pub mod ledger_entries;
 pub mod transactions;
+pub mod tx_engine;
 pub mod views;
 
 pub use dex::{BookKey, Flow, Offer, OfferBook, Pathfinder, Taker};
 pub use ledger::{Fees, Ledger, LedgerIndex, LedgerInfo, OpenView, ReadView};
-pub use transactions::{
-    AffectedNode, TER, Transaction, TransactionMetadata, TxType,
+pub use ledger_entries::{
+    AccountRoot, CallState, DirectoryNode, LedgerEntry, LedgerEntryType, OfferEntry,
 };
-pub use views::LedgerView;
+pub use transactions::{
+    AffectedNode, SignerEntry, TER, Transaction, TransactionMetadata, TxType,
+};
+pub use tx_engine::{AffectedLedgerNode, ApplyContext, ApplyRules, TransactionEngine, TxResult};
+pub use views::{BasicLedgerView, LedgerView};

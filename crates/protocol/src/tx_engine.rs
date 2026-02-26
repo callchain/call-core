@@ -1,0 +1,773 @@
+//! Transaction Processing Engine
+//!
+//! This module implements the core transaction validation and application logic.
+//! Each transaction type follows a three-phase process:
+//!
+//! 1. **Preflight**: Static validation (format, signature syntax, basic checks)
+//! 2. **Preclaim**: State-based validation (sufficient balance, sequence, etc.)
+//! 3. **Apply**: Execute the transaction and update ledger state
+
+use crate::ledger_entries::{AccountRoot, CallState, OfferEntry};
+use crate::transactions::{TER, Transaction, TxType};
+use crate::views::LedgerView;
+use primitives::{AccountID, Currency, UInt256};
+
+/// Rules for transaction processing
+#[derive(Debug, Clone)]
+pub struct ApplyRules {
+    pub max_fee: u64,
+    pub max_paths: usize,
+    pub max_signers: usize,
+    pub enable_amendments: bool,
+}
+
+impl Default for ApplyRules {
+    fn default() -> Self {
+        Self {
+            max_fee: 10_000_000, // 10 CALL maximum fee
+            max_paths: 8,
+            max_signers: 8,
+            enable_amendments: true,
+        }
+    }
+}
+
+/// Context for transaction application
+pub struct ApplyContext<'a> {
+    pub ledger: &'a mut dyn LedgerView,
+    pub rules: ApplyRules,
+    pub ledger_seq: u32,
+    pub parent_ledger_hash: UInt256,
+}
+
+impl<'a> std::fmt::Debug for ApplyContext<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApplyContext")
+            .field("rules", &self.rules)
+            .field("ledger_seq", &self.ledger_seq)
+            .field("parent_ledger_hash", &self.parent_ledger_hash)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Transaction processing result
+#[derive(Debug, Clone)]
+pub struct TxResult {
+    pub ter: TER,
+    pub fee_charged: u64,
+    pub affected_accounts: Vec<AccountID>,
+    pub affected_nodes: Vec<AffectedLedgerNode>,
+}
+
+/// Affected node record for metadata
+#[derive(Debug, Clone)]
+pub enum AffectedLedgerNode {
+    Created { ledger_index: UInt256, data: Vec<u8> },
+    Modified { ledger_index: UInt256, previous: Vec<u8>, final_data: Vec<u8> },
+    Deleted { ledger_index: UInt256, previous: Vec<u8> },
+}
+
+impl Default for TxResult {
+    fn default() -> Self {
+        Self {
+            ter: TER::tesSUCCESS,
+            fee_charged: 0,
+            affected_accounts: Vec::new(),
+            affected_nodes: Vec::new(),
+        }
+    }
+}
+
+/// Transaction processing engine
+pub struct TransactionEngine;
+
+impl TransactionEngine {
+    /// Create a new transaction engine
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Process a transaction through all phases
+    pub fn process(
+        &self,
+        ctx: &mut ApplyContext,
+        tx: &Transaction,
+    ) -> TxResult {
+        // Phase 1: Preflight checks (static validation)
+        let result = self.preflight(ctx, tx);
+        if result != TER::tesSUCCESS {
+            return TxResult {
+                ter: result,
+                fee_charged: 0,
+                affected_accounts: Vec::new(),
+                affected_nodes: Vec::new(),
+            };
+        }
+
+        // Phase 2: Preclaim checks (state-based validation)
+        let result = self.preclaim(ctx, tx);
+        if result != TER::tesSUCCESS {
+            return TxResult {
+                ter: result,
+                fee_charged: 0,
+                affected_accounts: Vec::new(),
+                affected_nodes: Vec::new(),
+            };
+        }
+
+        // Phase 3: Apply the transaction
+        self.apply(ctx, tx)
+    }
+
+    /// Preflight checks - static validation
+    fn preflight(&self, ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Check transaction type is valid
+        match tx.tx_type {
+            TxType::Payment
+            | TxType::IssueSet
+            | TxType::TrustSet
+            | TxType::OfferCreate
+            | TxType::OfferCancel
+            | TxType::AccountSet
+            | TxType::SetRegularKey
+            | TxType::SignerListSet => {}
+            _ => return TER::temINVALID_TRANSACTION_TYPE,
+        }
+
+        // Check fee is reasonable
+        if tx.fee > ctx.rules.max_fee {
+            return TER::telINSUFFICIENT_FEE;
+        }
+
+        // Check sequence is valid (must be > 0)
+        if tx.sequence == 0 {
+            return TER::temBAD_SEQUENCE;
+        }
+
+        // Validate signing public key if present
+        if let Some(pk) = &tx.signing_pub_key {
+            if pk.len() != 33 && pk.len() != 32 {
+                return TER::temBAD_SIGNATURE;
+            }
+        }
+
+        // Check transaction signature exists
+        if tx.txn_signature.is_none() {
+            return TER::temEMPTY_SIGNER;
+        }
+
+        // Type-specific preflight checks
+        match tx.tx_type {
+            TxType::Payment => self.preflight_payment(ctx, tx),
+            TxType::IssueSet => self.preflight_issue_set(ctx, tx),
+            TxType::TrustSet => self.preflight_trust_set(ctx, tx),
+            TxType::OfferCreate => self.preflight_offer_create(ctx, tx),
+            TxType::OfferCancel => self.preflight_offer_cancel(ctx, tx),
+            TxType::AccountSet => self.preflight_account_set(ctx, tx),
+            TxType::SetRegularKey => self.preflight_set_regular_key(ctx, tx),
+            TxType::SignerListSet => self.preflight_signer_list_set(ctx, tx),
+            _ => TER::temINVALID_TRANSACTION_TYPE,
+        }
+    }
+
+    /// Preclaim checks - state-based validation
+    fn preclaim(&self, ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Check source account exists
+        let account = match ctx.ledger.get_account_root(&tx.account) {
+            Some(acc) => acc,
+            None => return TER::terNO_ACCOUNT,
+        };
+
+        // Check sequence number matches
+        if tx.sequence != account.sequence {
+            return TER::terPRE_SEQ;
+        }
+
+        // Check sufficient balance for fee
+        let fee_amount = tx.fee as i64;
+        if account.balance.mantissa < fee_amount {
+            return TER::terINSUFF_FEE;
+        }
+
+        // Type-specific preclaim checks
+        match tx.tx_type {
+            TxType::Payment => self.preclaim_payment(ctx, tx, &account),
+            TxType::IssueSet => self.preclaim_issue_set(ctx, tx, &account),
+            TxType::TrustSet => self.preclaim_trust_set(ctx, tx, &account),
+            TxType::OfferCreate => self.preclaim_offer_create(ctx, tx, &account),
+            TxType::OfferCancel => self.preclaim_offer_cancel(ctx, tx, &account),
+            TxType::AccountSet => self.preclaim_account_set(ctx, tx, &account),
+            TxType::SetRegularKey => self.preclaim_set_regular_key(ctx, tx, &account),
+            TxType::SignerListSet => self.preclaim_signer_list_set(ctx, tx, &account),
+            _ => TER::temINVALID_TRANSACTION_TYPE,
+        }
+    }
+
+    /// Apply the transaction
+    fn apply(&self, ctx: &mut ApplyContext, tx: &Transaction) -> TxResult {
+        let mut result = TxResult::default();
+        let fee = tx.fee;
+        result.fee_charged = fee;
+
+        // Get the source account (we know it exists from preclaim)
+        let mut account = ctx.ledger.get_account_root(&tx.account).unwrap();
+
+        // Increment sequence
+        account.increment_sequence();
+
+        // Deduct fee
+        let fee_i64 = fee as i64;
+        account.balance.mantissa = account.balance.mantissa.saturating_sub(fee_i64);
+
+        // Update transaction tracking
+        account.update_previous_txn(tx.get_hash(), ctx.ledger_seq);
+
+        // Add to affected accounts
+        result.affected_accounts.push(tx.account);
+
+        // Type-specific application
+        let type_result = match tx.tx_type {
+            TxType::Payment => self.apply_payment(ctx, tx, &mut account, &mut result),
+            TxType::IssueSet => self.apply_issue_set(ctx, tx, &mut account, &mut result),
+            TxType::TrustSet => self.apply_trust_set(ctx, tx, &mut account, &mut result),
+            TxType::OfferCreate => self.apply_offer_create(ctx, tx, &mut account, &mut result),
+            TxType::OfferCancel => self.apply_offer_cancel(ctx, tx, &mut account, &mut result),
+            TxType::AccountSet => self.apply_account_set(ctx, tx, &mut account, &mut result),
+            TxType::SetRegularKey => self.apply_set_regular_key(ctx, tx, &mut account, &mut result),
+            TxType::SignerListSet => self.apply_signer_list_set(ctx, tx, &mut account, &mut result),
+            _ => TER::tecINTERNAL,
+        };
+
+        result.ter = type_result;
+
+        // Update the account root regardless of result
+        ctx.ledger.set_account_root(&account);
+
+        result
+    }
+}
+
+// Payment transaction implementation
+impl TransactionEngine {
+    fn preflight_payment(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Must have destination
+        if tx.destination.is_none() {
+            return TER::temDST_NEEDED;
+        }
+
+        // Must have amount
+        if tx.amount.is_none() {
+            return TER::temBAD_AMOUNT;
+        }
+
+        // Cannot send to self
+        if tx.destination == Some(tx.account) {
+            return TER::temREDUNDANT;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_payment(&self, _ctx: &ApplyContext, tx: &Transaction, account: &AccountRoot) -> TER {
+        let amount = tx.amount.as_ref().unwrap();
+
+        // Check sufficient balance for amount + fee
+        // Amount mantissa is i64, fee is u64 - convert carefully
+        let amount_val = amount.mantissa.max(0) as u64;
+        let total_needed = amount_val.saturating_add(tx.fee);
+        let balance_val = account.balance.mantissa.max(0) as u64;
+        if balance_val < total_needed {
+            return TER::terINSUFF_FEE;
+        }
+
+        // Check destination exists (unless creating it)
+        // In a real implementation, we'd check if the destination exists
+
+        TER::tesSUCCESS
+    }
+
+    fn apply_payment(
+        &self,
+        ctx: &mut ApplyContext,
+        tx: &Transaction,
+        sender: &mut AccountRoot,
+        result: &mut TxResult,
+    ) -> TER {
+        let amount = tx.amount.clone().unwrap();
+        let destination = tx.destination.unwrap();
+
+        // Deduct from sender (amount.mantissa is i64, balance.mantissa is i64)
+        let amount_val = amount.mantissa.max(0);
+        sender.balance.mantissa = sender.balance.mantissa.saturating_sub(amount_val);
+
+        // Get or create destination account
+        let mut recipient = match ctx.ledger.get_account_root(&destination) {
+            Some(acc) => acc,
+            None => {
+                // Create new account (if minimum reserve met)
+                AccountRoot::new(destination)
+            }
+        };
+
+        // Add to recipient
+        recipient.balance.mantissa = recipient.balance.mantissa.saturating_add(amount_val);
+
+        // Store updated accounts
+        ctx.ledger.set_account_root(&recipient);
+
+        if destination != sender.account {
+            result.affected_accounts.push(destination);
+        }
+
+        TER::tesSUCCESS
+    }
+}
+
+// IssueSet transaction implementation
+impl TransactionEngine {
+    fn preflight_issue_set(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Must have amount
+        if tx.amount.is_none() {
+            return TER::temBAD_AMOUNT;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_issue_set(&self, _ctx: &ApplyContext, _tx: &Transaction, _account: &AccountRoot) -> TER {
+        // Any account can issue tokens
+        TER::tesSUCCESS
+    }
+
+    fn apply_issue_set(
+        &self,
+        _ctx: &mut ApplyContext,
+        tx: &Transaction,
+        issuer: &mut AccountRoot,
+        _result: &mut TxResult,
+    ) -> TER {
+        let amount = tx.amount.clone().unwrap();
+
+        // Mint new tokens - increase issuer's balance
+        let amount_val = amount.mantissa.max(0);
+        issuer.balance.mantissa = issuer.balance.mantissa.saturating_add(amount_val);
+
+        TER::tesSUCCESS
+    }
+}
+
+// TrustSet transaction implementation
+impl TransactionEngine {
+    fn preflight_trust_set(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Must have limit amount
+        if tx.limit_amount.is_none() {
+            return TER::temBAD_AMOUNT;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_trust_set(&self, _ctx: &ApplyContext, _tx: &Transaction, _account: &AccountRoot) -> TER {
+        TER::tesSUCCESS
+    }
+
+    fn apply_trust_set(
+        &self,
+        ctx: &mut ApplyContext,
+        tx: &Transaction,
+        _account: &mut AccountRoot,
+        _result: &mut TxResult,
+    ) -> TER {
+        let limit = tx.limit_amount.clone().unwrap();
+
+        // Get or create the CallState (trust line)
+        // In a real implementation, we'd use the currency from the limit_amount
+        let currency = Currency::CALL; // Simplified for now
+        let issuer = tx.issuer.unwrap_or(tx.account);
+
+        let mut call_state = ctx
+            .ledger
+            .get_call_state(&tx.account, &issuer, &currency)
+            .unwrap_or_else(|| CallState::new(tx.account, issuer, currency));
+
+        // Update limit
+        call_state.limit = limit;
+
+        ctx.ledger.set_call_state(&call_state);
+
+        TER::tesSUCCESS
+    }
+}
+
+// OfferCreate transaction implementation
+impl TransactionEngine {
+    fn preflight_offer_create(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Must have both taker_pays and taker_gets
+        if tx.taker_pays.is_none() || tx.taker_gets.is_none() {
+            return TER::temBAD_OFFER;
+        }
+
+        // Cannot be crossing the same currency
+        let taker_pays = tx.taker_pays.as_ref().unwrap();
+        let taker_gets = tx.taker_gets.as_ref().unwrap();
+
+        // Simplified check - in reality, we'd check currency equality properly
+        if taker_pays.exponent == taker_gets.exponent && taker_pays.mantissa == taker_gets.mantissa {
+            // This is a simplified placeholder check
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_offer_create(&self, _ctx: &ApplyContext, tx: &Transaction, account: &AccountRoot) -> TER {
+        // Check sufficient balance for what the taker is offering
+        let taker_gets = tx.taker_gets.as_ref().unwrap();
+
+        // Check owner reserve (if creating a new offer)
+        let taker_gets_val = taker_gets.mantissa.max(0);
+        let balance_val = account.balance.mantissa.max(0);
+        if taker_gets_val > balance_val {
+            return TER::terINSUFF_FEE;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn apply_offer_create(
+        &self,
+        ctx: &mut ApplyContext,
+        tx: &Transaction,
+        account: &mut AccountRoot,
+        result: &mut TxResult,
+    ) -> TER {
+        let taker_pays = tx.taker_pays.clone().unwrap();
+        let taker_gets = tx.taker_gets.clone().unwrap();
+
+        // Create offer entry
+        let offer = OfferEntry::new(tx.account, tx.sequence, taker_pays, taker_gets);
+
+        ctx.ledger.set_offer(&offer);
+
+        // Increment owner count
+        account.add_owner_count(1);
+
+        TER::tesSUCCESS
+    }
+}
+
+// OfferCancel transaction implementation
+impl TransactionEngine {
+    fn preflight_offer_cancel(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Must have offer sequence
+        if tx.offer_sequence == 0 {
+            return TER::temBAD_OFFER;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_offer_cancel(&self, ctx: &ApplyContext, tx: &Transaction, _account: &AccountRoot) -> TER {
+        // Check offer exists
+        if ctx.ledger.get_offer(&tx.account, tx.offer_sequence).is_none() {
+            return TER::terNO_OFFER;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn apply_offer_cancel(
+        &self,
+        ctx: &mut ApplyContext,
+        tx: &Transaction,
+        account: &mut AccountRoot,
+        _result: &mut TxResult,
+    ) -> TER {
+        // Delete the offer
+        ctx.ledger.delete_offer(&tx.account, tx.offer_sequence);
+
+        // Decrement owner count
+        account.subtract_owner_count(1);
+
+        TER::tesSUCCESS
+    }
+}
+
+// AccountSet transaction implementation
+impl TransactionEngine {
+    fn preflight_account_set(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Can set domain, email hash, message key, transfer rate, tick size
+        // Validate tick size if present (1-15)
+        if let Some(tick_size) = tx.tick_size {
+            if tick_size == 0 || tick_size > 15 {
+                return TER::temBAD_TICK_SIZE;
+            }
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_account_set(&self, _ctx: &ApplyContext, _tx: &Transaction, _account: &AccountRoot) -> TER {
+        TER::tesSUCCESS
+    }
+
+    fn apply_account_set(
+        &self,
+        _ctx: &mut ApplyContext,
+        tx: &Transaction,
+        account: &mut AccountRoot,
+        _result: &mut TxResult,
+    ) -> TER {
+        // Update domain if provided
+        if let Some(domain) = &tx.domain {
+            account.domain = Some(domain.clone());
+        }
+
+        // Update email hash if provided
+        if let Some(email_hash) = tx.email_hash {
+            account.email_hash = Some(email_hash);
+        }
+
+        // Update message key if provided
+        if let Some(message_key) = &tx.message_key {
+            account.message_key = Some(message_key.clone());
+        }
+
+        // Update transfer rate if provided
+        if let Some(transfer_rate) = tx.transfer_rate {
+            account.transfer_rate = Some(transfer_rate);
+        }
+
+        // Update tick size if provided
+        if let Some(tick_size) = tx.tick_size {
+            account.tick_size = Some(tick_size);
+        }
+
+        TER::tesSUCCESS
+    }
+}
+
+// SetRegularKey transaction implementation
+impl TransactionEngine {
+    fn preflight_set_regular_key(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Must have regular key if setting
+        if tx.regular_key.is_none() {
+            return TER::temBAD_REGULAR_KEY;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_set_regular_key(&self, _ctx: &ApplyContext, _tx: &Transaction, _account: &AccountRoot) -> TER {
+        TER::tesSUCCESS
+    }
+
+    fn apply_set_regular_key(
+        &self,
+        _ctx: &mut ApplyContext,
+        tx: &Transaction,
+        account: &mut AccountRoot,
+        _result: &mut TxResult,
+    ) -> TER {
+        account.regular_key = tx.regular_key;
+        TER::tesSUCCESS
+    }
+}
+
+// SignerListSet transaction implementation
+impl TransactionEngine {
+    fn preflight_signer_list_set(&self, ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Check number of signers
+        if tx.signers.len() > ctx.rules.max_signers {
+            return TER::temBAD_SIGNER_LIST;
+        }
+
+        // Validate signer weights
+        let mut total_weight = 0u32;
+        for signer in &tx.signers {
+            total_weight += signer.weight as u32;
+        }
+
+        // Total weight must be >= quorum
+        if total_weight < tx.signer_quorum {
+            return TER::temBAD_SIGNER_LIST;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_signer_list_set(&self, _ctx: &ApplyContext, _tx: &Transaction, account: &AccountRoot) -> TER {
+        // Check owner reserve for signers
+        // Each signer entry requires reserve
+        TER::tesSUCCESS
+    }
+
+    fn apply_signer_list_set(
+        &self,
+        _ctx: &mut ApplyContext,
+        tx: &Transaction,
+        account: &mut AccountRoot,
+        _result: &mut TxResult,
+    ) -> TER {
+        // Update signer list on account
+        // In a full implementation, we'd create/update a SignerList ledger entry
+        account.owner_count = account.owner_count.saturating_add(1);
+        TER::tesSUCCESS
+    }
+}
+
+impl Default for TransactionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use primitives::AccountID;
+    use serialization::Amount;
+
+    struct MockLedgerView {
+        accounts: std::collections::HashMap<AccountID, AccountRoot>,
+    }
+
+    impl MockLedgerView {
+        fn new() -> Self {
+            Self {
+                accounts: std::collections::HashMap::new(),
+            }
+        }
+    }
+
+    impl LedgerView for MockLedgerView {
+        fn get_account_root(&self, account: &AccountID) -> Option<AccountRoot> {
+            self.accounts.get(account).cloned()
+        }
+
+        fn set_account_root(&mut self, account: &AccountRoot) {
+            self.accounts.insert(account.account, account.clone());
+        }
+
+        fn get_call_state(&self, _account: &AccountID, _issuer: &AccountID, _currency: &Currency) -> Option<CallState> {
+            None
+        }
+
+        fn set_call_state(&mut self, _state: &CallState) {}
+
+        fn get_offer(&self, _account: &AccountID, _sequence: u32) -> Option<OfferEntry> {
+            None
+        }
+
+        fn set_offer(&mut self, _offer: &OfferEntry) {}
+
+        fn delete_offer(&mut self, _account: &AccountID, _sequence: u32) {}
+
+        fn get_ledger_info(&self) -> crate::ledger::LedgerInfo {
+            crate::ledger::LedgerInfo::default()
+        }
+    }
+
+    #[test]
+    fn test_payment_validation() {
+        let engine = TransactionEngine::new();
+        let mut ledger = MockLedgerView::new();
+
+        // Create sender account
+        let sender = AccountID::new([1u8; 20]);
+        let sender_root = AccountRoot::new(sender).with_balance(1_000_000);
+        ledger.set_account_root(&sender_root);
+
+        let mut ctx = ApplyContext {
+            ledger: &mut ledger,
+            rules: ApplyRules::default(),
+            ledger_seq: 1,
+            parent_ledger_hash: UInt256::zero(),
+        };
+
+        // Create payment transaction
+        let mut tx = Transaction::new_payment(
+            sender,
+            AccountID::new([2u8; 20]),
+            Amount::call(100_000),
+        );
+        tx.sequence = 1;
+        tx.fee = 1000;
+
+        // Should fail preflight without signature
+        let result = engine.process(&mut ctx, &tx);
+        assert_eq!(result.ter, TER::temEMPTY_SIGNER);
+
+        // Add signature
+        tx.txn_signature = Some(vec![1, 2, 3, 4]);
+
+        // Should succeed now
+        let result = engine.process(&mut ctx, &tx);
+        assert_eq!(result.ter, TER::tesSUCCESS);
+        assert_eq!(result.fee_charged, 1000);
+    }
+
+    #[test]
+    fn test_insufficient_funds() {
+        let engine = TransactionEngine::new();
+        let mut ledger = MockLedgerView::new();
+
+        // Create sender with low balance
+        let sender = AccountID::new([1u8; 20]);
+        let sender_root = AccountRoot::new(sender).with_balance(1000);
+        ledger.set_account_root(&sender_root);
+
+        let mut ctx = ApplyContext {
+            ledger: &mut ledger,
+            rules: ApplyRules::default(),
+            ledger_seq: 1,
+            parent_ledger_hash: UInt256::zero(),
+        };
+
+        // Create large payment
+        let mut tx = Transaction::new_payment(
+            sender,
+            AccountID::new([2u8; 20]),
+            Amount::call(100_000),
+        );
+        tx.sequence = 1;
+        tx.fee = 1000;
+        tx.txn_signature = Some(vec![1, 2, 3, 4]);
+
+        let result = engine.process(&mut ctx, &tx);
+        assert_eq!(result.ter, TER::terINSUFF_FEE);
+    }
+
+    #[test]
+    fn test_sequence_mismatch() {
+        let engine = TransactionEngine::new();
+        let mut ledger = MockLedgerView::new();
+
+        // Create sender with sequence 5
+        let sender = AccountID::new([1u8; 20]);
+        let mut sender_root = AccountRoot::new(sender).with_balance(1_000_000);
+        for _ in 0..4 {
+            sender_root.increment_sequence();
+        }
+        ledger.set_account_root(&sender_root);
+
+        let mut ctx = ApplyContext {
+            ledger: &mut ledger,
+            rules: ApplyRules::default(),
+            ledger_seq: 1,
+            parent_ledger_hash: UInt256::zero(),
+        };
+
+        // Wrong sequence
+        let mut tx = Transaction::new_payment(
+            sender,
+            AccountID::new([2u8; 20]),
+            Amount::call(100_000),
+        );
+        tx.sequence = 1; // Should be 5
+        tx.fee = 1000;
+        tx.txn_signature = Some(vec![1, 2, 3, 4]);
+
+        let result = engine.process(&mut ctx, &tx);
+        assert_eq!(result.ter, TER::terPRE_SEQ);
+    }
+}
