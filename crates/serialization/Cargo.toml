@@ -1,0 +1,16 @@
+[package]
+name = "serialization"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+primitives = { path = "../primitives" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+bytes = { workspace = true }
+byteorder = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
