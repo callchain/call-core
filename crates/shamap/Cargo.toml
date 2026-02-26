@@ -1,0 +1,15 @@
+[package]
+name = "shamap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+primitives = { path = "../primitives" }
+crypto = { path = "../crypto" }
+serialization = { path = "../serialization" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
