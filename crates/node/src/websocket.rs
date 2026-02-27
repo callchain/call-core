@@ -699,8 +699,8 @@ async fn handle_connection(
 async fn broadcaster_task(
     app: ApplicationHandle,
     ledger_tx: broadcast::Sender<serde_json::Value>,
-    transactions_tx: broadcast::Sender<serde_json::Value>,
-    validations_tx: broadcast::Sender<serde_json::Value>,
+    _transactions_tx: broadcast::Sender<serde_json::Value>,
+    _validations_tx: broadcast::Sender<serde_json::Value>,
     consensus_tx: broadcast::Sender<serde_json::Value>,
     connections: Arc<RwLock<ConnectionManager>>,
 ) {
