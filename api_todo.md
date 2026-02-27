@@ -117,7 +117,6 @@ The following methods return proper response structures but need additional data
 - `feature` - Needs feature flag management
 - `nick_search` / `account_issues` / `account_invoices` - Needs database tables
 - `channel_authorize` / `paychan_claim` - Needs payment channel state machine
-- WebSocket full implementation - Needs WebSocket subscription management
 
 ---
 
@@ -125,25 +124,33 @@ The following methods return proper response structures but need additional data
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| WebSocket server | ⚠️ | Basic structure, incomplete handler |
-| `subscribe` command | ⚠️ | Basic streams only |
-| `unsubscribe` command | ✅ | Basic implementation |
+| WebSocket server | ✅ | Full implementation with connection management |
+| `subscribe` command | ✅ | All streams: ledger, transactions, validations, consensus, peer |
+| `unsubscribe` command | ✅ | Full implementation |
 | `ping` command | ✅ | Pong response |
-| Ledger broadcast | ⚠️ | Basic implementation |
-| Transaction broadcast | ⚠️ | Stub |
-| Validation broadcast | ⚠️ | Stub |
+| `server_info` command | ✅ | Server info over WebSocket |
+| `ledger` command | ✅ | Current ledger info |
+| `account_info` command | ✅ | Account info over WebSocket |
+| Ledger broadcast | ✅ | Full ledger closed events |
+| Transaction broadcast | ✅ | Real-time transaction updates |
+| Validation broadcast | ✅ | Validation received events |
+| Consensus broadcast | ✅ | Consensus phase updates |
+| Peer events broadcast | ✅ | Peer status change events |
+| Account subscriptions | ✅ | Subscribe to specific account updates |
+| Response formatting | ✅ | Proper JSON response format |
+| Error handling | ✅ | WebSocket error responses with codes |
+| Connection management | ✅ | Track and manage connections with limits |
 
-### Missing WebSocket Features
+### WebSocket Streams Summary
 
-| Feature | Description | Priority |
-|---------|-------------|----------|
-| Full subscribe streams | `ledger`, `transactions`, `validations` | High |
-| Account subscriptions | Subscribe to specific account updates | High |
-| Peer messages | Subscribe to peer messages | Medium |
-| Consensus streams | Subscribe to consensus phase updates | Medium |
-| Response formatting | Proper JSON response format | High |
-| Error handling | WebSocket error responses | Medium |
-| Connection management | Track and manage connections | Medium |
+| Stream | Description | Implementation |
+|--------|-------------|----------------|
+| `ledger` | Ledger closed events | ✅ Full implementation |
+| `transactions` | All validated transactions | ✅ Full implementation |
+| `validations` | Consensus validations | ✅ Full implementation |
+| `consensus` | Consensus phase changes | ✅ Full implementation |
+| `peer` | Peer connection events | ✅ Full implementation |
+| `accounts` | Account-specific updates | ✅ Supported via subscribe |
 
 ---
 
@@ -184,7 +191,7 @@ Last updated: 2026-02-27
 - **Total RPC Methods**: 70+
 - **Fully Implemented**: 18 methods with real logic ✅
 - **Stub Implemented**: ~53 methods with proper response structures ✅
-- **WebSocket features remaining**: ~7
+- **WebSocket features**: Fully implemented ✅
 
 ### Progress
 
@@ -192,4 +199,5 @@ Last updated: 2026-02-27
 - [x] Phase 2: Transaction APIs (sign, sign_for implemented)
 - [x] Phase 3: Network & Admin (peers, get_counts implemented)
 - [x] Phase 4: Account & Verification APIs (account_tx, tx_history, gateway_balances, owner_info, account_currencies, wallet_verify, channel_verify)
-- [ ] Phase 5: Path finding and WebSocket full implementation
+- [x] Phase 5: WebSocket full implementation (all streams, broadcasts, error handling)
+- [ ] Phase 6: Path finding and remaining stub implementations
