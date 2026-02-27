@@ -1,4 +1,4 @@
-use primitives::{AccountID, Currency, UInt256};
+use primitives::{AccountID, UInt256};
 use serialization::{Amount, STObject};
 
 /// Transaction type enum matching calld values
@@ -47,6 +47,7 @@ pub struct SignerEntry {
 /// Transaction Engine Result (TER) codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
+#[allow(non_camel_case_types)]
 pub enum TER {
     // Success
     tesSUCCESS = 0,

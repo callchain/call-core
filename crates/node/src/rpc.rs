@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use primitives::AccountID;
 
 /// JSON-RPC 2.0 request
@@ -112,7 +112,7 @@ pub trait RpcHandler: Send + Sync {
     ) -> Result<serde_json::Value, JsonRpcError>;
 }
 
-use crate::application::{Application, ApplicationHandle};
+use crate::application::ApplicationHandle;
 
 /// Application-aware RPC handler
 pub struct AppRpcHandler {
@@ -170,7 +170,7 @@ impl RpcHandler for AppRpcHandler {
                 if account_bytes.len() != 20 {
                     return Err(JsonRpcError::new(35, "Account malformed."));
                 }
-                let account_id = AccountID::new(account_bytes.try_into().unwrap());
+                let _account_id = AccountID::new(account_bytes.try_into().unwrap());
 
                 // Query ledger (placeholder - would query actual ledger state)
                 Err(JsonRpcError::new(
@@ -223,7 +223,7 @@ impl RpcHandler for AppRpcHandler {
             }
             "tx" => {
                 let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let tx_hash = params.get("transaction")
+                let _tx_hash = params.get("transaction")
                     .and_then(|v| v.as_str())
                     .ok_or(JsonRpcError::invalid_params())?;
 
@@ -306,7 +306,7 @@ impl RpcHandler for AppRpcHandler {
             }
             "ledger_accept" => {
                 // Force ledger close (admin/testing method)
-                let mut app = self.app.write().await;
+                let app = self.app.write().await;
                 // Trigger consensus acceptance
                 Ok(serde_json::json!({
                     "status": "success",

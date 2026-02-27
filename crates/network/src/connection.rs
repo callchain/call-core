@@ -7,16 +7,15 @@
 //! - Connection state management
 
 use crate::message::{HelloMessage, Message, MessageType, StatusChangeMessage};
-use crate::peer::{Peer, PeerState};
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BytesMut};
 use primitives::UInt256;
 use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::time::{interval, timeout};
-use tracing::{debug, error, info, warn};
+use tokio::time::timeout;
+use tracing::{debug, error, info};
 
 /// Protocol constants
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -110,6 +109,7 @@ impl From<FramedMessage> for Message {
 }
 
 /// Connection handle for peer communication
+#[allow(dead_code)]
 pub struct Connection {
     stream: TcpStream,
     peer_addr: SocketAddr,

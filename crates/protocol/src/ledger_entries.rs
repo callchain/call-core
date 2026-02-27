@@ -132,7 +132,7 @@ impl LedgerEntry for AccountRoot {
     }
 
     fn to_stobject(&self) -> STObject {
-        let mut obj = STObject::new();
+        let obj = STObject::new();
         // In a real implementation, serialize all fields
         obj
     }

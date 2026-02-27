@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+#[cfg(test)]
+use std::time::Duration;
 
 /// Metric types supported by the system
 #[derive(Debug, Clone)]
@@ -270,6 +272,6 @@ mod tests {
     fn test_uptime() {
         let registry = MetricsRegistry::new();
         std::thread::sleep(Duration::from_millis(10));
-        assert!(registry.uptime_seconds() >= 0);
+        let _uptime = registry.uptime_seconds(); // Just verify it doesn't panic
     }
 }

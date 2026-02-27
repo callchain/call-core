@@ -54,9 +54,9 @@ impl Message {
     }
 
     /// Create a validation message
-    pub fn validation(v: &Validation) -> Self {
+    pub fn validation(_v: &Validation) -> Self {
         // Serialize validation using the serialization crate
-        let mut serializer = Serializer::new();
+        let serializer = Serializer::new();
         // Add validation fields to serializer
         // This is a simplified placeholder
         let payload = serializer.finish();
@@ -64,18 +64,18 @@ impl Message {
     }
 
     /// Create a proposal message
-    pub fn propose(p: &Proposal) -> Self {
+    pub fn propose(_p: &Proposal) -> Self {
         // Serialize proposal
-        let mut serializer = Serializer::new();
+        let serializer = Serializer::new();
         // Add proposal fields
         let payload = serializer.finish();
         Self::new(MessageType::Propose, payload)
     }
 
     /// Create a transaction message
-    pub fn transaction(tx: &Transaction) -> Self {
+    pub fn transaction(_tx: &Transaction) -> Self {
         // Serialize transaction
-        let mut serializer = Serializer::new();
+        let serializer = Serializer::new();
         // Add transaction fields
         let payload = serializer.finish();
         Self::new(MessageType::Transaction, payload)

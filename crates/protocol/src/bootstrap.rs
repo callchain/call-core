@@ -14,7 +14,7 @@ use crate::transactions::Transaction;
 use primitives::{AccountID, UInt256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Bootstrap configuration
 #[derive(Debug, Clone)]
@@ -343,7 +343,7 @@ pub struct GenesisLoader;
 
 impl GenesisLoader {
     /// Load or create the genesis ledger
-    pub fn load_or_create(genesis_config: &GenesisConfig) -> Ledger {
+    pub fn load_or_create(_genesis_config: &GenesisConfig) -> Ledger {
         info!("Loading genesis ledger");
 
         // In a real implementation, this would:
@@ -451,18 +451,18 @@ impl PeerDiscovery {
 /// Bootstrap manager coordinates the entire startup process
 pub struct BootstrapManager {
     config: BootstrapConfig,
-    genesis_config: GenesisConfig,
+    _genesis_config: GenesisConfig,
     synchronizer: Option<LedgerSynchronizer>,
     peer_discovery: PeerDiscovery,
 }
 
 impl BootstrapManager {
-    pub fn new(config: BootstrapConfig, genesis_config: GenesisConfig) -> Self {
+    pub fn new(config: BootstrapConfig, _genesis_config: GenesisConfig) -> Self {
         let peer_discovery = PeerDiscovery::new(config.bootstrap_peers.clone());
 
         Self {
             config,
-            genesis_config,
+            _genesis_config,
             synchronizer: None,
             peer_discovery,
         }
@@ -473,7 +473,7 @@ impl BootstrapManager {
         info!("Initializing node bootstrap");
 
         // Load genesis ledger
-        let genesis = GenesisLoader::load_or_create(&self.genesis_config);
+        let genesis = GenesisLoader::load_or_create(&self._genesis_config);
 
         // Initialize synchronizer
         self.synchronizer = Some(LedgerSynchronizer::new(self.config.clone()));
@@ -606,8 +606,8 @@ mod tests {
     #[test]
     fn test_bootstrap_manager() {
         let config = BootstrapConfig::default();
-        let genesis_config = GenesisConfig::default();
-        let mut manager = BootstrapManager::new(config, genesis_config);
+        let _genesis_config = GenesisConfig::default();
+        let mut manager = BootstrapManager::new(config, _genesis_config);
 
         let genesis = manager.initialize();
         assert_eq!(genesis.get_seq(), 1);

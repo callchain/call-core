@@ -1,4 +1,4 @@
-use crate::{SHAMapAbstractNode, SHAMapInnerNode, SHAMapInnerNodeV2};
+use crate::SHAMapAbstractNode;
 use crate::leaf_node::{SHAMapItem, SHAMapTreeNode, SHAMapTreeNodeType};
 use crypto::sha512_half;
 use primitives::UInt256;
@@ -130,7 +130,7 @@ impl SHAMap {
         self.seq += 1;
     }
 
-    pub fn iter(&self) -> SHAMapIterator {
+    pub fn iter(&self) -> SHAMapIterator<'_> {
         SHAMapIterator::new(self.root.as_deref())
     }
 }

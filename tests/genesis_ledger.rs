@@ -5,9 +5,6 @@
 
 use primitives::{AccountID, Currency, UInt256};
 use protocol::{AccountRoot, Fees, Ledger, LedgerEntry, LedgerInfo, Transaction, TxType};
-use serialization::Amount;
-use shamap::{SHAMap, SHAMapItem, SHAMapType};
-use crypto::sha512_half;
 
 /// Test creating a genesis ledger with initial accounts
 #[test]

@@ -6,9 +6,7 @@ pub use inner_node::{SHAMapInnerNode, SHAMapInnerNodeV2};
 pub use leaf_node::{SHAMapItem, SHAMapTreeNode, SHAMapTreeNodeType};
 pub use map::{SHAMap, SHAMapType};
 
-use crypto::HashPrefix;
 use primitives::UInt256;
-use serialization::Serializer;
 
 #[derive(Debug, Clone)]
 pub enum SHAMapAbstractNode {

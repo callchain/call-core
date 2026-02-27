@@ -15,8 +15,8 @@ use futures::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
-use tracing::{debug, error, info, warn};
+use tokio::sync::{broadcast, Mutex, RwLock};
+use tracing::{debug, info, warn};
 
 /// WebSocket configuration
 #[derive(Debug, Clone)]
@@ -136,7 +136,7 @@ impl WebSocketServer {
 
         loop {
             tokio::select! {
-                Ok((stream, addr)) = listener.accept() => {
+                Ok((_stream, addr)) = listener.accept() => {
                     conn_id += 1;
                     info!("New WebSocket connection {} from {}", conn_id, addr);
 
@@ -148,10 +148,10 @@ impl WebSocketServer {
                     connections.write().await.push(handle.clone());
 
                     // Spawn connection handler
-                    let ledger_rx = self.ledger_tx.subscribe();
-                    let transactions_rx = self.transactions_tx.subscribe();
-                    let validations_rx = self.validations_tx.subscribe();
-                    let connections_clone = connections.clone();
+                    let _ledger_rx = self.ledger_tx.subscribe();
+                    let _transactions_rx = self.transactions_tx.subscribe();
+                    let _validations_rx = self.validations_tx.subscribe();
+                    let _connections_clone = connections.clone();
 
                     tokio::spawn(async move {
                         // Use axum's WebSocket upgrade
@@ -328,8 +328,8 @@ impl WebSocketServer {
 async fn broadcaster_task(
     app: ApplicationHandle,
     ledger_tx: broadcast::Sender<serde_json::Value>,
-    transactions_tx: broadcast::Sender<serde_json::Value>,
-    validations_tx: broadcast::Sender<serde_json::Value>,
+    _transactions_tx: broadcast::Sender<serde_json::Value>,
+    _validations_tx: broadcast::Sender<serde_json::Value>,
 ) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
 

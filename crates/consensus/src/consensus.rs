@@ -278,7 +278,7 @@ impl Consensus {
 
         // Count peer votes from their proposals
         if let Some(state) = &self.state {
-            for peer in state.peer_positions.values() {
+            for _peer in state.peer_positions.values() {
                 // In real impl, we'd extract transactions from peer's position
                 // For now, mark all as potentially disputed if not matching
             }
@@ -308,11 +308,11 @@ impl Consensus {
         for tx in &disputed {
             // Count votes for this transaction
             let mut votes_for = 0;
-            let mut votes_against = 0;
+            let votes_against = 0;
 
             if let Some(state) = &self.state {
                 // Count peer votes
-                for peer in state.peer_positions.values() {
+                for _peer in state.peer_positions.values() {
                     // In real impl, check if peer's position includes this tx
                     // Simplified: assume 60% acceptance
                     votes_for += 1;

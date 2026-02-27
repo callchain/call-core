@@ -9,7 +9,7 @@
 //! - Queue ordering by fee level
 
 use crate::ledger::Fees;
-use crate::transactions::{TER, Transaction, TxType};
+use crate::transactions::{TER, Transaction};
 use crate::tx_engine::{ApplyContext, ApplyRules, TransactionEngine, TxResult};
 use crate::views::LedgerView;
 use primitives::{AccountID, UInt256};
@@ -397,6 +397,7 @@ mod tests {
     use super::*;
     use crate::ledger_entries::AccountRoot;
 
+    #[allow(dead_code)]
     struct MockLedgerView;
 
     impl LedgerView for MockLedgerView {
@@ -467,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_fee_escalation() {
-        let mut escalation = FeeEscalation::new(10, 100);
+        let escalation = FeeEscalation::new(10, 100);
 
         // At target size, should return base fee
         assert_eq!(escalation.required_fee(50), 10);

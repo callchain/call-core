@@ -1,6 +1,6 @@
 use crate::message::{Message, MessageType};
-use crate::peer::{Peer, PeerFilter, PeerState};
-use consensus::{Consensus, Proposal, Validation};
+use crate::peer::{Peer, PeerFilter};
+use consensus::{Proposal, Validation};
 use primitives::NodeID;
 use protocol::Transaction;
 use std::collections::HashMap;
@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 /// Overlay network manager
+#[allow(dead_code)]
 pub struct Overlay {
     peers: HashMap<SocketAddr, Peer>,
     peer_by_node_id: HashMap<NodeID, SocketAddr>,

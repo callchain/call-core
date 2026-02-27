@@ -3,7 +3,6 @@ use crate::rpc::{RpcConfig, RpcServer, SimpleRpcHandler};
 use consensus::{Consensus, ConsensusParms, ConsensusMode, ConsensusPhase};
 use network::Overlay;
 use primitives::NodeID;
-use protocol::Ledger;
 use storage::Database;
 use std::sync::Arc;
 use tokio::sync::{RwLock, watch};

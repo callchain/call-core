@@ -5,15 +5,14 @@
 
 use primitives::{AccountID, Currency, NodeID, UInt256};
 use protocol::{
-    AccountRoot, AffectedNode, CallState, DirectoryNode, Fees, Ledger, LedgerEntry,
-    LedgerEntryType, LedgerInfo, OfferEntry, OpenView, SignerEntry, TER, Transaction,
-    TransactionMetadata, TxType,
+    AccountRoot, CallState, DirectoryNode, Fees, Ledger, LedgerEntry,
+    OfferEntry, SignerEntry, Transaction,
+    TxType,
 };
-use protocol::{ApplyContext, ApplyRules, TransactionEngine, TransactionQueue};
 use consensus::{Amendment, AmendmentStatus, Consensus, ConsensusParms, Proposal, Validation};
 use network::{Message, MessageType, Overlay, Peer};
 use storage::{Database, MemoryBackend, NodeObject, NodeObjectType};
-use crypto::{sha256, sha512_half, HashPrefix, KeyType, PrivateKey, PublicKey, Signature};
+use crypto::{sha256, sha512_half, PrivateKey};
 use serialization::{Amount, STObject};
 use shamap::{SHAMap, SHAMapItem, SHAMapType};
 
@@ -371,7 +370,7 @@ fn test_directory_node_operations() {
 /// Test offer book operations
 #[test]
 fn test_offer_book_insert() {
-    use protocol::{BookKey, Offer, OfferBook};
+    use protocol::{Offer, OfferBook};
 
     let currency1 = Currency::CALL;
     let currency2 = Currency::new([1u8; 20]);
@@ -443,18 +442,18 @@ fn test_stobject_operations() {
     let mut obj = STObject::new();
 
     // Insert fields
-    obj.insert(sf::Account, serialization::STValue::Account(AccountID::new([1u8; 20])));
-    obj.insert(sf::Amount, serialization::STValue::Amount(Amount::call(1000)));
+    obj.insert(sf::ACCOUNT, serialization::STValue::Account(AccountID::new([1u8; 20])));
+    obj.insert(sf::AMOUNT, serialization::STValue::Amount(Amount::call(1000)));
 
     // Verify fields exist
-    assert!(obj.contains(sf::Account));
-    assert!(obj.contains(sf::Amount));
+    assert!(obj.contains(sf::ACCOUNT));
+    assert!(obj.contains(sf::AMOUNT));
 
     // Get fields back
-    let account = obj.get_account(sf::Account);
+    let account = obj.get_account(sf::ACCOUNT);
     assert!(account.is_some());
 
-    let amount = obj.get_amount(sf::Amount);
+    let amount = obj.get_amount(sf::AMOUNT);
     assert!(amount.is_some());
     assert_eq!(amount.unwrap().mantissa, 1000);
 
@@ -654,7 +653,7 @@ fn test_node_object_types() {
 /// Test transaction queue
 #[test]
 fn test_transaction_queue() {
-    use protocol::{FeeEscalation, QueuedTransaction, TransactionQueue};
+    use protocol::TransactionQueue;
 
     let mut queue = TransactionQueue::new(100);
     let account = AccountID::new([1u8; 20]);

@@ -7,16 +7,15 @@
 //! - Connection maintenance (ping/pong, timeouts)
 
 use crate::connection::{connect_peer, Connection, NetworkServer, PING_INTERVAL};
-use crate::message::{HelloMessage, Message, MessageType, StatusChangeMessage};
+use crate::message::{HelloMessage, Message};
 use crate::overlay::Overlay;
-use crate::peer::{Peer, PeerState};
+use crate::peer::Peer;
 use primitives::{LedgerIndex, NodeID, UInt256};
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpStream;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, timeout};
 use tracing::{debug, error, info, warn};
@@ -50,6 +49,7 @@ pub enum NetworkEvent {
 }
 
 /// Manages all network connections and bridges with overlay
+#[allow(dead_code)]
 pub struct NetworkManager {
     overlay: Arc<RwLock<Overlay>>,
     node_id: NodeID,
@@ -62,6 +62,7 @@ pub struct NetworkManager {
 }
 
 /// Active peer connection state
+#[allow(dead_code)]
 struct PeerConnection {
     address: SocketAddr,
     state: PeerConnectionState,
@@ -69,6 +70,7 @@ struct PeerConnection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum PeerConnectionState {
     Connecting,
     Handshaking,

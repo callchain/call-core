@@ -1,6 +1,6 @@
 use crypto::HashPrefix;
 use primitives::UInt256;
-use serialization::{Amount, Serializer, SerialIter};
+use serialization::{Serializer, SerialIter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SHAMapTreeNodeType {

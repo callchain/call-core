@@ -4,7 +4,6 @@
 //! and indexing support.
 
 use crate::backend::Backend;
-use crate::node_object::{NodeObject, NodeObjectType};
 use primitives::{AccountID, LedgerIndex, UInt256};
 use std::collections::HashMap;
 
@@ -104,6 +103,7 @@ pub struct HistoricalLedger {
 
 /// Account transaction index entry
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct AccountTxIndexEntry {
     account: AccountID,
     ledger_index: LedgerIndex,

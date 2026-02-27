@@ -132,8 +132,11 @@ define_uint!(UInt128, 16);
 define_uint!(UInt160, 20);
 define_uint!(UInt256, 32);
 
+#[allow(non_camel_case_types)]
 pub type uint128 = UInt128;
+#[allow(non_camel_case_types)]
 pub type uint160 = UInt160;
+#[allow(non_camel_case_types)]
 pub type uint256 = UInt256;
 
 #[cfg(test)]

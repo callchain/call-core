@@ -1,4 +1,4 @@
-use primitives::{AccountID, Currency, UInt256};
+use primitives::{AccountID, Currency};
 use serialization::{Amount, PathStep};
 
 /// Offer represents a DEX order
@@ -148,6 +148,7 @@ impl Flow {
 
 /// Represents a node in the pathfinding graph
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct PathNode {
     account: AccountID,
     currency: Currency,
@@ -320,7 +321,7 @@ mod tests {
     #[test]
     fn test_offer_quality() {
         let account = AccountID::new([0u8; 20]);
-        let currency1 = Currency::CALL;
+        let _currency1 = Currency::CALL;
         let currency2 = Currency::new([1u8; 20]);
 
         let taker_gets = Amount::call(1000000);

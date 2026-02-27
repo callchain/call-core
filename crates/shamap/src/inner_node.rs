@@ -7,6 +7,7 @@ pub struct SHAMapInnerNode {
     hashes: [UInt256; 16],
     children: [Option<Box<crate::SHAMapAbstractNode>>; 16],
     is_branch: u16,
+    #[allow(dead_code)]
     seq: u32,
 }
 

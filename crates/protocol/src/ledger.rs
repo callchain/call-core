@@ -1,4 +1,4 @@
-use primitives::{AccountID, UInt256};
+use primitives::UInt256;
 use serialization::STObject;
 use shamap::{SHAMap, SHAMapItem, SHAMapType};
 

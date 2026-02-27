@@ -444,7 +444,7 @@ impl TransactionEngine {
         ctx: &mut ApplyContext,
         tx: &Transaction,
         account: &mut AccountRoot,
-        result: &mut TxResult,
+        _result: &mut TxResult,
     ) -> TER {
         let taker_pays = tx.taker_pays.clone().unwrap();
         let taker_gets = tx.taker_gets.clone().unwrap();
@@ -601,7 +601,7 @@ impl TransactionEngine {
         TER::tesSUCCESS
     }
 
-    fn preclaim_signer_list_set(&self, _ctx: &ApplyContext, _tx: &Transaction, account: &AccountRoot) -> TER {
+    fn preclaim_signer_list_set(&self, _ctx: &ApplyContext, _tx: &Transaction, _account: &AccountRoot) -> TER {
         // Check owner reserve for signers
         // Each signer entry requires reserve
         TER::tesSUCCESS
@@ -610,7 +610,7 @@ impl TransactionEngine {
     fn apply_signer_list_set(
         &self,
         _ctx: &mut ApplyContext,
-        tx: &Transaction,
+        _tx: &Transaction,
         account: &mut AccountRoot,
         _result: &mut TxResult,
     ) -> TER {
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn test_payment_validation() {
-        use crypto::{PrivateKey, PublicKey, KeyType};
+        use crypto::PrivateKey;
 
         let engine = TransactionEngine::new();
         let mut ledger = MockLedgerView::new();
@@ -867,7 +867,7 @@ mod tests {
 
     #[test]
     fn test_insufficient_funds() {
-        use crypto::{PrivateKey, PublicKey};
+        use crypto::PrivateKey;
 
         let engine = TransactionEngine::new();
         let mut ledger = MockLedgerView::new();
@@ -909,7 +909,7 @@ mod tests {
 
     #[test]
     fn test_sequence_mismatch() {
-        use crypto::{PrivateKey, PublicKey};
+        use crypto::PrivateKey;
 
         let engine = TransactionEngine::new();
         let mut ledger = MockLedgerView::new();

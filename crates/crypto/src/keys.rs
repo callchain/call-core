@@ -3,7 +3,7 @@ use primitives::AccountID;
 use rand::rngs::OsRng;
 use ripemd::Ripemd160;
 use sha2::{Digest, Sha256};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::ZeroizeOnDrop;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyType {
