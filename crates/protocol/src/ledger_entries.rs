@@ -52,6 +52,15 @@ pub trait LedgerEntry: Clone {
         Self: Sized;
 }
 
+/// Enum for different ledger object types
+#[derive(Debug, Clone)]
+pub enum LedgerObject {
+    AccountRoot(AccountRoot),
+    CallState(CallState),
+    Offer(OfferEntry),
+    Directory(DirectoryNode),
+}
+
 /// AccountRoot entry - represents an account in the ledger
 #[derive(Debug, Clone)]
 pub struct AccountRoot {
@@ -505,6 +514,88 @@ impl LedgerState {
         self.state_map.get_item(key)
     }
 
+    /// Get all trust lines (CallState) for an account
+    pub fn get_call_states_for_account(&self, account: &AccountID) -> Vec<CallState> {
+        let mut results = Vec::new();
+        for item in self.state_map.iter() {
+            if let Some(call_state) = Self::deserialize_call_state(item.data()) {
+                if call_state.account == *account {
+                    results.push(call_state);
+                }
+            }
+        }
+        results
+    }
+
+    /// Get all offers for an account
+    pub fn get_offers_for_account(&self, account: &AccountID) -> Vec<OfferEntry> {
+        let mut results = Vec::new();
+        for item in self.state_map.iter() {
+            if let Some(offer) = Self::deserialize_offer(item.data()) {
+                if offer.account == *account {
+                    results.push(offer);
+                }
+            }
+        }
+        results
+    }
+
+    /// Get all directory nodes for an account
+    pub fn get_directories_for_account(&self, account: &AccountID) -> Vec<DirectoryNode> {
+        let mut results = Vec::new();
+        for item in self.state_map.iter() {
+            if let Some(dir) = Self::deserialize_directory(item.data()) {
+                if let Some(owner) = dir.owner {
+                    if owner == *account {
+                        results.push(dir);
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    /// Get account objects (offers, directories, etc.)
+    pub fn get_account_objects(&self, account: &AccountID, limit: usize) -> Vec<LedgerObject> {
+        let mut results = Vec::new();
+        let mut count = 0;
+
+        for item in self.state_map.iter() {
+            if count >= limit {
+                break;
+            }
+
+            // Try to deserialize as different object types
+            if let Some(offer) = Self::deserialize_offer(item.data()) {
+                if offer.account == *account {
+                    results.push(LedgerObject::Offer(offer));
+                    count += 1;
+                    continue;
+                }
+            }
+
+            if let Some(dir) = Self::deserialize_directory(item.data()) {
+                if let Some(owner) = dir.owner {
+                    if owner == *account {
+                        results.push(LedgerObject::Directory(dir));
+                        count += 1;
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(call_state) = Self::deserialize_call_state(item.data()) {
+                if call_state.account == *account {
+                    results.push(LedgerObject::CallState(call_state));
+                    count += 1;
+                    continue;
+                }
+            }
+        }
+
+        results
+    }
+
     fn serialize_account_root(root: &AccountRoot) -> Vec<u8> {
         use serialization::Serializer;
         let mut ser = Serializer::with_capacity(128);
@@ -559,7 +650,7 @@ impl LedgerState {
         ser.finish()
     }
 
-    fn deserialize_call_state(data: &[u8]) -> Option<CallState> {
+    pub fn deserialize_call_state(data: &[u8]) -> Option<CallState> {
         use serialization::SerialIter;
         let mut iter = SerialIter::new(data);
 
@@ -602,7 +693,7 @@ impl LedgerState {
         ser.finish()
     }
 
-    fn deserialize_offer(data: &[u8]) -> Option<OfferEntry> {
+    pub fn deserialize_offer(data: &[u8]) -> Option<OfferEntry> {
         use serialization::SerialIter;
         let mut iter = SerialIter::new(data);
 
@@ -626,6 +717,22 @@ impl LedgerState {
             previous_txn_lgr_seq: 0,
             expiration,
         })
+    }
+
+    fn deserialize_directory(data: &[u8]) -> Option<DirectoryNode> {
+        use serialization::SerialIter;
+        let mut iter = SerialIter::new(data);
+
+        let root_index = iter.get256().ok()?;
+
+        let mut dir = DirectoryNode::new(root_index);
+
+        // Try to read optional fields
+        if let Ok(owner) = iter.get_account() {
+            dir.owner = Some(owner);
+        }
+
+        Some(dir)
     }
 
     fn serialize_nickname(entry: &NicknameEntry) -> Vec<u8> {
