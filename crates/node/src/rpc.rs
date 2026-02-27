@@ -173,41 +173,65 @@ impl RpcHandler for AppRpcHandler {
                 let account_id = AccountID::new(account_bytes.try_into().unwrap());
 
                 // Query ledger state through application
-                // The app.read() provides access to the Application which has ledger state
                 let app = self.app.read().await;
+                let ledger_state = app.get_ledger_state();
 
-                // For now, return a mock response since we don't have direct LedgerState access
-                // In a full implementation, this would query the ledger's state tree
-                Ok(serde_json::json!({
-                    "account": account,
-                    "account_data": {
-                        "Account": hex::encode(account_id.as_bytes()),
-                        "Balance": "1000000000",
-                        "Sequence": 1,
-                        "OwnerCount": 0,
-                        "PreviousTxnID": "0000000000000000000000000000000000000000000000000000000000000000",
-                        "PreviousTxnLgrSeq": 0,
-                    },
-                    "ledger_current_index": app.consensus.get_ledger_index(),
-                    "queue_data": null,
-                    "status": "success",
-                    "validated": false,
-                }))
+                // Try to fetch account root from ledger state
+                if let Some(account_root) = ledger_state.get_account_root(&account_id) {
+                    Ok(serde_json::json!({
+                        "account": account,
+                        "account_data": {
+                            "Account": hex::encode(account_id.as_bytes()),
+                            "Balance": account_root.balance.mantissa.to_string(),
+                            "Sequence": account_root.sequence,
+                            "OwnerCount": account_root.owner_count,
+                            "PreviousTxnID": hex::encode(account_root.previous_txn_id.as_bytes()),
+                            "PreviousTxnLgrSeq": account_root.previous_txn_lgr_seq,
+                        },
+                        "ledger_current_index": app.consensus.get_ledger_index(),
+                        "queue_data": null,
+                        "status": "success",
+                        "validated": false,
+                    }))
+                } else {
+                    // Account not found in ledger
+                    Err(JsonRpcError::new(
+                        19,
+                        "Account not found."
+                    ))
+                }
             }
             "ledger" => {
-                // Get ledger info
-                let ledger_index = params.as_ref()
+                // Get ledger info from application
+                let app = self.app.read().await;
+                let ledger_hash = app.get_current_ledger_hash();
+                let ledger_seq = app.get_current_ledger_seq();
+                let ledger_state = app.get_ledger_state();
+                let account_hash = ledger_state.get_root_hash();
+
+                // Get requested ledger index (if specified)
+                let requested_index = params.as_ref()
                     .and_then(|p| p.get("ledger_index"))
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                    .map(|v| v as u32);
+
+                // If requesting current ledger or no specific ledger, return current
+                let (return_hash, return_seq, return_parent) = if requested_index.is_none() || requested_index == Some(ledger_seq) {
+                    (ledger_hash, ledger_seq, primitives::UInt256::zero())
+                } else {
+                    // Requesting a different ledger - we only have current
+                    // Return placeholder for non-current ledgers
+                    (primitives::UInt256::zero(), requested_index.unwrap_or(0), primitives::UInt256::zero())
+                };
 
                 Ok(serde_json::json!({
                     "ledger": {
-                        "ledger_index": ledger_index.to_string(),
-                        "ledger_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-                        "parent_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "ledger_index": return_seq.to_string(),
+                        "ledger_hash": hex::encode(return_hash.as_bytes()),
+                        "parent_hash": hex::encode(return_parent.as_bytes()),
+                        "account_hash": hex::encode(account_hash.as_bytes()),
                         "close_time": 0,
-                        "closed": true,
+                        "closed": false,
                     },
                     "status": "success",
                     "validated": false,
@@ -239,15 +263,37 @@ impl RpcHandler for AppRpcHandler {
             }
             "tx" => {
                 let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let _tx_hash = params.get("transaction")
+                let tx_hash_hex = params.get("transaction")
                     .and_then(|v| v.as_str())
                     .ok_or(JsonRpcError::invalid_params())?;
 
-                // Transaction lookup - would query ledger
-                Err(JsonRpcError::new(
-                    24,
-                    "Transaction not found."
-                ))
+                // Parse transaction hash
+                let tx_hash_bytes = hex::decode(tx_hash_hex).map_err(|_| {
+                    JsonRpcError::new(31, "Transaction hash malformed")
+                })?;
+                if tx_hash_bytes.len() != 32 {
+                    return Err(JsonRpcError::new(31, "Transaction hash malformed"));
+                }
+                let tx_hash = primitives::UInt256::new(tx_hash_bytes.try_into().unwrap());
+
+                // Query database for transaction
+                let app = self.app.read().await;
+                if let Some(tx_node) = app.database.fetch_transaction_node(&tx_hash) {
+                    // Transaction found - return with metadata
+                    Ok(serde_json::json!({
+                        "hash": tx_hash_hex,
+                        "tx_blob": hex::encode(tx_node.get_data()),
+                        "meta": null, // Would include metadata if available
+                        "validated": true,
+                        "status": "success",
+                    }))
+                } else {
+                    // Transaction not found in database
+                    Err(JsonRpcError::new(
+                        24,
+                        "Transaction not found."
+                    ))
+                }
             }
             "account_tx" => {
                 let params = params.ok_or(JsonRpcError::invalid_params())?;

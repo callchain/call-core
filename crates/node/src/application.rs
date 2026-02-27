@@ -35,6 +35,10 @@ pub struct Application {
     /// Current ledger info
     current_ledger_hash: primitives::UInt256,
     current_ledger_seq: u32,
+    /// Ledger state for account and object storage
+    ledger_state: protocol::LedgerState,
+    /// Transaction queue for pending transactions
+    tx_queue: protocol::TransactionQueue,
 }
 
 impl Application {
@@ -76,6 +80,12 @@ impl Application {
             admin_enabled: config.rpc_admin_enabled,
         };
 
+        // Initialize ledger state
+        let ledger_state = protocol::LedgerState::new();
+
+        // Initialize transaction queue (max 10000 pending transactions)
+        let tx_queue = protocol::TransactionQueue::new(10000);
+
         info!("Application initialized with node_id: {:?}", node_id);
 
         Ok(Self {
@@ -91,6 +101,8 @@ impl Application {
             last_consensus_tick: std::time::Instant::now(),
             current_ledger_hash: primitives::UInt256::zero(),
             current_ledger_seq: 0,
+            ledger_state,
+            tx_queue,
         })
     }
 
@@ -103,6 +115,26 @@ impl Application {
     pub fn set_state(&mut self, state: NodeState) {
         info!("Node state transition: {:?} -> {:?}", self.state, state);
         self.state = state;
+    }
+
+    /// Get the current ledger hash
+    pub fn get_current_ledger_hash(&self) -> primitives::UInt256 {
+        self.current_ledger_hash
+    }
+
+    /// Get the current ledger sequence
+    pub fn get_current_ledger_seq(&self) -> u32 {
+        self.current_ledger_seq
+    }
+
+    /// Get the ledger state
+    pub fn get_ledger_state(&self) -> &protocol::LedgerState {
+        &self.ledger_state
+    }
+
+    /// Get the ledger state (mutable)
+    pub fn get_ledger_state_mut(&mut self) -> &mut protocol::LedgerState {
+        &mut self.ledger_state
     }
 
     /// Start the application
@@ -431,16 +463,21 @@ impl Application {
     }
 
     /// Add transaction to open ledger
-    fn add_to_open_ledger(&mut self, _tx: &protocol::Transaction) -> anyhow::Result<()> {
-        // In a full implementation, this would add the transaction to the
-        // open ledger (transaction queue) for inclusion in the next consensus round
-
-        // For now, we just log that it would be added
+    fn add_to_open_ledger(&mut self, tx: &protocol::Transaction) -> anyhow::Result<()> {
+        // Add the transaction to the queue for inclusion in the next consensus round
         debug!("Adding transaction to open ledger");
 
-        // TODO: Add to TransactionQueue/OpenLedger when implemented
-
-        Ok(())
+        // Clone the transaction and add to queue
+        let tx_clone = tx.clone();
+        match self.tx_queue.insert(tx_clone) {
+            Ok(_) => {
+                debug!("Transaction added to queue successfully");
+                Ok(())
+            }
+            Err(ter) => {
+                Err(anyhow::anyhow!("Failed to queue transaction: {:?}", ter))
+            }
+        }
     }
 
     /// Broadcast transaction to connected peers

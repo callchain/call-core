@@ -14,7 +14,7 @@ pub use bootstrap::{
 pub use dex::{BookKey, Flow, Offer, OfferBook, Pathfinder, Taker};
 pub use ledger::{Fees, Ledger, LedgerIndex, LedgerInfo, OpenView, ReadView};
 pub use ledger_entries::{
-    AccountRoot, CallState, DirectoryNode, LedgerEntry, LedgerEntryType, NicknameEntry, OfferEntry,
+    AccountRoot, CallState, DirectoryNode, LedgerEntry, LedgerEntryType, LedgerState, NicknameEntry, OfferEntry,
 };
 pub use transactions::{
     AffectedNode, SignerEntry, TER, Transaction, TransactionMetadata, TxType,
