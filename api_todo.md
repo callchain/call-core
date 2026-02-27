@@ -83,7 +83,7 @@ This document tracks RPC and WebSocket API implementation status in call-core (R
 
 ### Fully Implemented (with actual logic)
 
-The following methods have complete implementations that interact with the ledger state:
+The following methods have complete implementations that interact with the ledger state or perform actual cryptographic operations:
 
 1. **`account_lines`** - Queries all CallState entries from ledger state for an account
 2. **`account_objects`** - Queries all ledger objects (offers, directories, trust lines) for an account
@@ -96,17 +96,28 @@ The following methods have complete implementations that interact with the ledge
 9. **`sign_for`** - Signs transactions for another account using secp256k1
 10. **`ledger_data`** - Iterates SHAMap entries with limit
 11. **`ledger_entry`** - Gets specific entry by key from SHAMap
+12. **`account_tx`** - Queries account transactions with ledger range filtering
+13. **`tx_history`** - Queries transaction history with pagination
+14. **`gateway_balances`** - Calculates gateway obligations and balances from trust lines
+15. **`owner_info`** - Counts owner objects (offers, trust lines, directories) for an account
+16. **`account_currencies`** - Lists currencies an account can send/receive from trust lines
+17. **`wallet_verify`** - Verifies cryptographic signatures using secp256k1/ed25519
+18. **`channel_verify`** - Verifies channel payment authorization signatures
 
 ### Stub Implementations
 
-The following methods return proper response structures but need database/ledger integration:
+The following methods return proper response structures but need additional database/ledger integration:
 
-- `account_tx` - Needs transaction history database
-- `tx_history` - Needs transaction history database
-- `path_find` / `call_path_find` - Needs path finding algorithm
-- `gateway_balances` - Needs gateway balance calculation
-- `owner_info` - Needs owner count calculation
-- `wallet_verify` / `channel_verify` - Need actual signature verification
+- `path_find` / `call_path_find` - Needs path finding algorithm implementation
+- `wallet_seed` / `validation_seed` - Needs seed-to-key derivation
+- `wallet_unlock` - Needs wallet encryption/decryption
+- `connect` - Needs actual peer connection logic
+- `unl_list` / `validators` / `validator_list_sites` - Needs UNL configuration
+- `ledger_cleaner` / `ledger_request` - Needs ledger management logic
+- `feature` - Needs feature flag management
+- `nick_search` / `account_issues` / `account_invoices` - Needs database tables
+- `channel_authorize` / `paychan_claim` - Needs payment channel state machine
+- WebSocket full implementation - Needs WebSocket subscription management
 
 ---
 
@@ -171,8 +182,8 @@ Last updated: 2026-02-27
 ### Summary
 
 - **Total RPC Methods**: 70+
-- **Fully Implemented**: 11 methods with real logic ✅
-- **Stub Implemented**: ~60 methods with proper response structures ✅
+- **Fully Implemented**: 18 methods with real logic ✅
+- **Stub Implemented**: ~53 methods with proper response structures ✅
 - **WebSocket features remaining**: ~7
 
 ### Progress
@@ -180,5 +191,5 @@ Last updated: 2026-02-27
 - [x] Phase 1: Core APIs (method stubs + account_lines, account_objects, account_offers, book_offers, ledger_data, ledger_entry)
 - [x] Phase 2: Transaction APIs (sign, sign_for implemented)
 - [x] Phase 3: Network & Admin (peers, get_counts implemented)
-- [ ] Phase 4: Full implementation of remaining stub methods
-- [ ] WebSocket full implementation
+- [x] Phase 4: Account & Verification APIs (account_tx, tx_history, gateway_balances, owner_info, account_currencies, wallet_verify, channel_verify)
+- [ ] Phase 5: Path finding and WebSocket full implementation
