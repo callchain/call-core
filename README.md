@@ -102,11 +102,30 @@ cargo build --release
 # Run all tests
 cargo test --all
 
+# Run specific crate tests
+cargo test -p primitives
+cargo test -p serialization
+cargo test -p crypto
+cargo test -p protocol
+cargo test -p consensus
+cargo test -p network
+cargo test -p storage
+
 # Run integration tests
-cargo test -p integration_tests
+cargo test --test integration_tests
+cargo test --test genesis_ledger
 
 # Run with output
 cargo test --all -- --nocapture
+
+# Run specific test
+cargo test test_full_ledger_close -- --nocapture
+
+# Run with logging
+RUST_LOG=debug cargo test test_name -- --nocapture
+
+# Run single threaded
+cargo test --all -- --test-threads=1
 ```
 
 ## RPC Methods
