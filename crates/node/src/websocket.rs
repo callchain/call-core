@@ -681,23 +681,18 @@ async fn handle_connection(
     addr: String,
     connections: Arc<RwLock<ConnectionManager>>,
     ledger_tx: broadcast::Sender<serde_json::Value>,
-    transactions_tx: broadcast::Sender<serde_json::Value>,
-    validations_tx: broadcast::Sender<serde_json::Value>,
+    _transactions_tx: broadcast::Sender<serde_json::Value>,
+    _validations_tx: broadcast::Sender<serde_json::Value>,
     consensus_tx: broadcast::Sender<serde_json::Value>,
     peer_tx: broadcast::Sender<serde_json::Value>,
 ) {
-    // Perform WebSocket handshake
-    use axum::extract::ws::WebSocket;
-    use axum::extract::ws::Message;
-    use futures::{sink::SinkExt, stream::StreamExt};
-
     // For a proper implementation, we'd use axum's WebSocketUpgrade
     // This is a simplified version that assumes the stream is already upgraded
     // In practice, this would be handled by the HTTP router
 
     // Skip actual WebSocket handling here - it's done in handle_socket
     // This function is a placeholder for the TCP stream handling
-    let _ = (stream, conn_id, addr, connections, ledger_tx, transactions_tx, validations_tx, consensus_tx, peer_tx);
+    let _ = (stream, conn_id, addr, connections, ledger_tx, consensus_tx, peer_tx);
 }
 
 /// Background task that polls the application and broadcasts updates

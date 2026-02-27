@@ -414,14 +414,7 @@ impl RpcHandler for AppRpcHandler {
 
                 // Search transaction nodes for ones involving this account
                 // In a full implementation, this would use a transaction index database
-                let mut transactions: Vec<serde_json::Value> = Vec::new();
-
-                // Get account root to include in response
-                let account_root = ledger_state.get_account_root(&account_id);
-
-                // For now, return transactions from stored transaction nodes
-                // A full implementation would iterate the transaction history database
-                let mut count = 0;
+                let transactions: Vec<serde_json::Value> = Vec::new();
 
                 // Return proper response with account info
                 Ok(serde_json::json!({
