@@ -250,10 +250,6 @@ pub mod amendments {
                 "Support for multi-signature transactions",
             ),
             Amendment::standard(
-                "Tickets",
-                "Support for transaction sequence tickets",
-            ),
-            Amendment::standard(
                 "FlowV2",
                 "Improved payment flow engine",
             ),

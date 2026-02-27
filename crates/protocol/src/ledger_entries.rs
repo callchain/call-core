@@ -13,6 +13,7 @@ pub enum LedgerEntryType {
     CallState = 0x63,   // 'c' - trust line
     Offer = 0x6F,       // 'o'
     DirectoryNode = 0x64, // 'd'
+    Nickname = 0x6E,    // 'n'
     FeeRoot = 0x46,     // 'F' - custom to Callchain
     IssueRoot = 0x69,   // 'i' - custom to Callchain
     Invoice = 0x76,     // 'v' - custom to Callchain
@@ -25,6 +26,7 @@ impl LedgerEntryType {
             0x63 => Some(Self::CallState),
             0x6F => Some(Self::Offer),
             0x64 => Some(Self::DirectoryNode),
+            0x6E => Some(Self::Nickname),
             0x46 => Some(Self::FeeRoot),
             0x69 => Some(Self::IssueRoot),
             0x76 => Some(Self::Invoice),
@@ -318,6 +320,43 @@ impl DirectoryNode {
     }
 }
 
+/// Nickname entry - maps a nickname to an account
+#[derive(Debug, Clone)]
+pub struct NicknameEntry {
+    pub nickname: Vec<u8>,
+    pub account: AccountID,
+    pub min_offer: Option<Amount>,
+    pub previous_txn_id: UInt256,
+    pub previous_txn_lgr_seq: u32,
+}
+
+impl NicknameEntry {
+    pub fn new(nickname: Vec<u8>, account: AccountID) -> Self {
+        Self {
+            nickname,
+            account,
+            min_offer: None,
+            previous_txn_id: UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        }
+    }
+
+    pub fn ledger_index(&self) -> UInt256 {
+        // Nickname index is hash of the nickname
+        let hash = crypto::sha256(&self.nickname);
+        UInt256::new(hash)
+    }
+
+    pub fn set_min_offer(&mut self, amount: Amount) {
+        self.min_offer = Some(amount);
+    }
+
+    pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
+        self.previous_txn_id = txn_id;
+        self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
 /// LedgerStateManager - manages all ledger state
 #[derive(Debug, Clone)]
 pub struct LedgerState {
@@ -358,6 +397,19 @@ impl LedgerState {
     }
 
     pub fn delete_offer(&mut self, _account: &AccountID, _sequence: u32) {
+        // In a real implementation, remove from SHAMap
+    }
+
+    pub fn get_nickname(&self, _nickname: &[u8]) -> Option<NicknameEntry> {
+        // In a real implementation, fetch from SHAMap
+        None
+    }
+
+    pub fn set_nickname(&mut self, _nickname: &NicknameEntry) {
+        // In a real implementation, store in SHAMap
+    }
+
+    pub fn delete_nickname(&mut self, _nickname: &[u8]) {
         // In a real implementation, remove from SHAMap
     }
 }
@@ -447,5 +499,24 @@ mod tests {
         assert_eq!(LedgerEntryType::CallState.as_u16(), 0x63);
         assert_eq!(LedgerEntryType::Offer.as_u16(), 0x6F);
         assert_eq!(LedgerEntryType::DirectoryNode.as_u16(), 0x64);
+        assert_eq!(LedgerEntryType::Nickname.as_u16(), 0x6E);
+    }
+
+    #[test]
+    fn test_nickname_entry() {
+        let account = AccountID::new([1u8; 20]);
+        let nickname = b"alice";
+
+        let entry = NicknameEntry::new(nickname.to_vec(), account);
+
+        assert_eq!(entry.nickname, nickname.to_vec());
+        assert_eq!(entry.account, account);
+        assert!(entry.min_offer.is_none());
+
+        // Test set_min_offer
+        let amount = Amount::call(1000000);
+        let mut entry = NicknameEntry::new(nickname.to_vec(), account);
+        entry.set_min_offer(amount.clone());
+        assert_eq!(entry.min_offer, Some(amount));
     }
 }
