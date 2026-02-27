@@ -382,7 +382,7 @@ impl RpcHandler for AppRpcHandler {
                     .and_then(|v| v.as_str())
                     .ok_or(JsonRpcError::invalid_params())?;
 
-                let account_id = parse_account(account)?;
+                let _account_id = parse_account(account)?;
                 let ledger_index_min = params.get("ledger_index_min")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(-1) as u32;
@@ -397,7 +397,7 @@ impl RpcHandler for AppRpcHandler {
                     .unwrap_or(false);
 
                 // Get ledger state for account root
-                let ledger_state = app.get_ledger_state();
+                let _ledger_state = app.get_ledger_state();
                 let current_ledger = app.consensus.get_ledger_index();
 
                 // Determine effective ledger range
@@ -885,7 +885,7 @@ impl RpcHandler for AppRpcHandler {
 
                 let app = self.app.read().await;
 
-                if let Some(tx_node) = app.database.fetch_transaction_node(&tx_hash) {
+                if let Some(_tx_node) = app.database.fetch_transaction_node(&tx_hash) {
                     Ok(serde_json::json!({
                         "tx_json": {
                             "hash": tx_hash_hex,
@@ -1020,9 +1020,9 @@ impl RpcHandler for AppRpcHandler {
             "book_offers" => {
                 let app = self.app.read().await;
                 let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let taker_gets = params.get("taker_gets")
+                let _taker_gets = params.get("taker_gets")
                     .ok_or(JsonRpcError::invalid_params())?;
-                let taker_pays = params.get("taker_pays")
+                let _taker_pays = params.get("taker_pays")
                     .ok_or(JsonRpcError::invalid_params())?;
 
                 let taker = params.get("taker")
@@ -1085,7 +1085,7 @@ impl RpcHandler for AppRpcHandler {
                     .and_then(|v| v.as_object())
                     .ok_or_else(|| JsonRpcError::new(31, "Missing 'destination_amount'"))?;
 
-                let source_currencies = params.get("source_currencies")
+                let _source_currencies = params.get("source_currencies")
                     .and_then(|v| v.as_array());
 
                 let source_id = parse_account(source_account)?;
@@ -1170,7 +1170,7 @@ impl RpcHandler for AppRpcHandler {
                     .and_then(|v| v.as_object());
 
                 let source_id = parse_account(source_account)?;
-                let dest_id = parse_account(destination_account)?;
+                let _dest_id = parse_account(destination_account)?;
                 let ledger_state = app.get_ledger_state();
 
                 // Callchain path finding: prioritize CALL currency paths
@@ -1349,7 +1349,7 @@ impl RpcHandler for AppRpcHandler {
             }
 
             "blacklist" => {
-                let app = self.app.read().await;
+                let _app = self.app.read().await;
                 let params = params.as_ref();
 
                 // Get blacklist - in a real implementation this would come from overlay
@@ -1774,7 +1774,7 @@ impl RpcHandler for AppRpcHandler {
             }
 
             "ledger_accept" => {
-                let mut app = self.app.write().await;
+                let app = self.app.write().await;
                 Ok(serde_json::json!({
                     "status": "success",
                     "ledger_current_index": app.consensus.get_ledger_index(),
@@ -1784,9 +1784,9 @@ impl RpcHandler for AppRpcHandler {
             "ledger_cleaner" => {
                 let params = params.as_ref();
                 let fix = params.and_then(|p| p.get("fix")).and_then(|v| v.as_bool()).unwrap_or(false);
-                let check = params.and_then(|p| p.get("check")).and_then(|v| v.as_bool()).unwrap_or(false);
+                let _check = params.and_then(|p| p.get("check")).and_then(|v| v.as_bool()).unwrap_or(false);
 
-                let mut app = self.app.write().await;
+                let app = self.app.write().await;
                 let ledger_state = app.get_ledger_state();
                 let mut issues_found = 0u64;
                 let mut issues_fixed = 0u64;
@@ -1838,7 +1838,7 @@ impl RpcHandler for AppRpcHandler {
                 let peers = app.overlay.get_active_peers();
                 let mut requested_from = 0u64;
 
-                for peer in peers.iter().take(5) {
+                for _peer in peers.iter().take(5) {
                     // In a real implementation, this would send a ledger request message
                     requested_from += 1;
                 }
@@ -2079,13 +2079,12 @@ impl RpcHandler for AppRpcHandler {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| JsonRpcError::new(31, "Missing 'account'"))?;
 
-                let account_id = parse_account(account)?;
-                let app = self.app.read().await;
+                let _account_id = parse_account(account)?;
+                let _app = self.app.read().await;
 
                 // Get issues (disputes/problems) for account
                 // In a real implementation, this would query the issues database
                 let issues: Vec<serde_json::Value> = Vec::new();
-                let _ = account_id;
 
                 Ok(serde_json::json!({
                     "account": account,
@@ -2100,13 +2099,12 @@ impl RpcHandler for AppRpcHandler {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| JsonRpcError::new(31, "Missing 'account'"))?;
 
-                let account_id = parse_account(account)?;
-                let app = self.app.read().await;
+                let _account_id = parse_account(account)?;
+                let _app = self.app.read().await;
 
                 // Get invoices for account
                 // In a real implementation, this would query the invoices database
                 let invoices: Vec<serde_json::Value> = Vec::new();
-                let _ = account_id;
 
                 Ok(serde_json::json!({
                     "account": account,

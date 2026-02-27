@@ -72,6 +72,7 @@ struct ConnectionManager {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct ConnectionInfo {
     id: u64,
     ip: String,
