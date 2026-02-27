@@ -495,6 +495,16 @@ impl LedgerState {
     }
 
     // Serialization helpers
+    /// Iterate over all entries in the ledger state
+    pub fn iter(&self) -> impl Iterator<Item = &shamap::SHAMapItem> {
+        self.state_map.iter()
+    }
+
+    /// Get an entry by key
+    pub fn get(&self, key: &primitives::UInt256) -> Option<&shamap::SHAMapItem> {
+        self.state_map.get_item(key)
+    }
+
     fn serialize_account_root(root: &AccountRoot) -> Vec<u8> {
         use serialization::Serializer;
         let mut ser = Serializer::with_capacity(128);
