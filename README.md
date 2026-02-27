@@ -49,7 +49,7 @@ cd call-core
 cargo build --release
 
 # The binary will be at:
-# target/release/call-core
+# target/release/calld
 ```
 
 ## Running
@@ -58,32 +58,32 @@ cargo build --release
 
 ```bash
 # Start with default configuration
-./target/release/call-core
+./target/release/calld
 
 # Start with custom data directory
-./target/release/call-core --data-dir /path/to/data
+./target/release/calld --data-dir /path/to/data
 
 # Start as validator
-./target/release/call-core --validation-seed sn3nxiW7v8KXzPzAqzyHXbSSKNuN
+./target/release/calld --validation-seed sn3nxiW7v8KXzPzAqzyHXbSSKNuN
 
 # Start with bootstrap peers
-./target/release/call-core --peers 127.0.0.1:51235,192.168.1.100:51235
+./target/release/calld --peers 127.0.0.1:51235,192.168.1.100:51235
 ```
 
 ### CLI Commands
 
 ```bash
 # Generate a new validation seed
-./target/release/call-core generate-seed
+./target/release/calld generate-seed
 
 # Show ledger information
-./target/release/call-core ledger-info current
+./target/release/calld ledger-info current
 
 # Show account information
-./target/release/call-core account-info rN7n7otQDd6FczFgLdlqtyMVrn3HMfHgFj
+./target/release/calld account-info rN7n7otQDd6FczFgLdlqtyMVrn3HMfHgFj
 
 # Submit a transaction (hex blob)
-./target/release/call-core submit 12000022000000002400000001...
+./target/release/calld submit 12000022000000002400000001...
 ```
 
 ### Options
@@ -137,7 +137,7 @@ Configuration can be provided via:
 Example configuration file:
 ```toml
 node_name = "my-call-node"
-data_dir = "/var/lib/call-core"
+data_dir = "/var/lib/calld"
 listen_address = "0.0.0.0:51235"
 validation_seed = "sn3nxiW7v8KXzPzAqzyHXbSSKNuN"
 
