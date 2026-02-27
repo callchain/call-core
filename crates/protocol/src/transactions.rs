@@ -7,13 +7,13 @@ use serialization::{Amount, STObject};
 pub enum TxType {
     Invalid = -1,
     Payment = 0,
-    IssueSet = 1,
-    TrustSet = 2,
-    OfferCreate = 3,
-    OfferCancel = 4,
-    AccountSet = 5,
-    SetRegularKey = 6,
-    SignerListSet = 7,
+    AccountSet = 3,
+    SetRegularKey = 5,
+    OfferCreate = 7,
+    OfferCancel = 8,
+    SignerListSet = 12,
+    IssueSet = 16,
+    TrustSet = 20,
 }
 
 impl TxType {
@@ -25,13 +25,13 @@ impl TxType {
         match v {
             -1 => Some(Self::Invalid),
             0 => Some(Self::Payment),
-            1 => Some(Self::IssueSet),
-            2 => Some(Self::TrustSet),
-            3 => Some(Self::OfferCreate),
-            4 => Some(Self::OfferCancel),
-            5 => Some(Self::AccountSet),
-            6 => Some(Self::SetRegularKey),
-            7 => Some(Self::SignerListSet),
+            3 => Some(Self::AccountSet),
+            5 => Some(Self::SetRegularKey),
+            7 => Some(Self::OfferCreate),
+            8 => Some(Self::OfferCancel),
+            12 => Some(Self::SignerListSet),
+            16 => Some(Self::IssueSet),
+            20 => Some(Self::TrustSet),
             _ => None,
         }
     }
@@ -412,10 +412,25 @@ mod tests {
 
     #[test]
     fn test_tx_type_roundtrip() {
+        // Values must match calld specification
         assert_eq!(TxType::Payment.as_i16(), 0);
-        assert_eq!(TxType::IssueSet.as_i16(), 1);
+        assert_eq!(TxType::AccountSet.as_i16(), 3);
+        assert_eq!(TxType::SetRegularKey.as_i16(), 5);
+        assert_eq!(TxType::OfferCreate.as_i16(), 7);
+        assert_eq!(TxType::OfferCancel.as_i16(), 8);
+        assert_eq!(TxType::SignerListSet.as_i16(), 12);
+        assert_eq!(TxType::IssueSet.as_i16(), 16);
+        assert_eq!(TxType::TrustSet.as_i16(), 20);
+
+        // Test from_i16 roundtrip
         assert_eq!(TxType::from_i16(0), Some(TxType::Payment));
-        assert_eq!(TxType::from_i16(1), Some(TxType::IssueSet));
+        assert_eq!(TxType::from_i16(3), Some(TxType::AccountSet));
+        assert_eq!(TxType::from_i16(5), Some(TxType::SetRegularKey));
+        assert_eq!(TxType::from_i16(7), Some(TxType::OfferCreate));
+        assert_eq!(TxType::from_i16(8), Some(TxType::OfferCancel));
+        assert_eq!(TxType::from_i16(12), Some(TxType::SignerListSet));
+        assert_eq!(TxType::from_i16(16), Some(TxType::IssueSet));
+        assert_eq!(TxType::from_i16(20), Some(TxType::TrustSet));
         assert_eq!(TxType::from_i16(999), None);
     }
 

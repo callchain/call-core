@@ -539,6 +539,58 @@ impl RpcHandler for AppRpcHandler {
                                 "owner_count": root.owner_count,
                             })
                         }
+                        protocol::LedgerObject::SignerList(sl) => {
+                            serde_json::json!({
+                                "type": "signer_list",
+                                "account": hex::encode(sl.account.as_bytes()),
+                                "signer_quorum": sl.signer_quorum,
+                                "signer_count": sl.signers.len(),
+                            })
+                        }
+                        protocol::LedgerObject::LedgerHashes(lh) => {
+                            serde_json::json!({
+                                "type": "ledger_hashes",
+                                "ledger_index": lh.ledger_index,
+                                "hash_count": lh.hashes.len(),
+                            })
+                        }
+                        protocol::LedgerObject::Amendments(am) => {
+                            serde_json::json!({
+                                "type": "amendments",
+                                "amendment_count": am.amendments.len(),
+                            })
+                        }
+                        protocol::LedgerObject::FeeSettings(fs) => {
+                            serde_json::json!({
+                                "type": "fee_settings",
+                                "base_fee": fs.base_fee,
+                                "reserve_base": fs.reserve_base,
+                                "reserve_increment": fs.reserve_increment,
+                            })
+                        }
+                        protocol::LedgerObject::IssueRoot(ir) => {
+                            serde_json::json!({
+                                "type": "issue_root",
+                                "issuer": hex::encode(ir.issuer.as_bytes()),
+                                "total_supply": ir.total_supply.mantissa.to_string(),
+                                "issued_amount": ir.issued_amount.mantissa.to_string(),
+                            })
+                        }
+                        protocol::LedgerObject::Invoice(inv) => {
+                            serde_json::json!({
+                                "type": "invoice",
+                                "invoice_id": hex::encode(inv.invoice_id.as_bytes()),
+                                "issuer": hex::encode(inv.issuer.as_bytes()),
+                                "owner": hex::encode(inv.owner.as_bytes()),
+                                "amount": inv.amount.mantissa.to_string(),
+                            })
+                        }
+                        protocol::LedgerObject::FeeRoot(fr) => {
+                            serde_json::json!({
+                                "type": "fee_root",
+                                "balance": fr.balance.mantissa.to_string(),
+                            })
+                        }
                     })
                     .collect();
 

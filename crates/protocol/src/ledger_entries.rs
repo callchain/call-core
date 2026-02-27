@@ -5,28 +5,38 @@
 
 use primitives::{AccountID, Currency, UInt256};
 use serialization::{Amount, STObject};
+use crate::SignerEntry;
 
 /// Ledger entry types
+/// Values match calld specification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedgerEntryType {
-    AccountRoot = 0x61, // 'a'
-    CallState = 0x63,   // 'c' - trust line
-    Offer = 0x6F,       // 'o'
-    DirectoryNode = 0x64, // 'd'
-    Nickname = 0x6E,    // 'n'
-    FeeRoot = 0x46,     // 'F' - custom to Callchain
-    IssueRoot = 0x69,   // 'i' - custom to Callchain
-    Invoice = 0x76,     // 'v' - custom to Callchain
+    AccountRoot = 0x61,     // 'a'
+    CallState = 0x72,       // 'r' - trust line (was incorrectly 'c')
+    Offer = 0x6F,           // 'o'
+    DirectoryNode = 0x64,   // 'd'
+    Nickname = 0x6E,        // 'n'
+    SignerList = 0x53,      // 'S' - multi-sign
+    LedgerHashes = 0x68,    // 'h' - ledger history
+    Amendments = 0x66,      // 'f' - protocol amendments
+    FeeSettings = 0x73,     // 's' - fee configuration
+    FeeRoot = 0x46,         // 'F' - custom to Callchain
+    IssueRoot = 0x69,       // 'i' - custom to Callchain
+    Invoice = 0x76,         // 'v' - custom to Callchain
 }
 
 impl LedgerEntryType {
     pub fn from_u16(v: u16) -> Option<Self> {
         match v {
             0x61 => Some(Self::AccountRoot),
-            0x63 => Some(Self::CallState),
+            0x72 => Some(Self::CallState),
             0x6F => Some(Self::Offer),
             0x64 => Some(Self::DirectoryNode),
             0x6E => Some(Self::Nickname),
+            0x53 => Some(Self::SignerList),
+            0x68 => Some(Self::LedgerHashes),
+            0x66 => Some(Self::Amendments),
+            0x73 => Some(Self::FeeSettings),
             0x46 => Some(Self::FeeRoot),
             0x69 => Some(Self::IssueRoot),
             0x76 => Some(Self::Invoice),
@@ -59,6 +69,14 @@ pub enum LedgerObject {
     CallState(CallState),
     Offer(OfferEntry),
     Directory(DirectoryNode),
+    // New ledger object types added for calld compatibility
+    SignerList(SignerList),
+    LedgerHashes(LedgerHashes),
+    Amendments(Amendments),
+    FeeSettings(FeeSettings),
+    IssueRoot(IssueRoot),
+    Invoice(Invoice),
+    FeeRoot(FeeRoot),
 }
 
 /// AccountRoot entry - represents an account in the ledger
@@ -380,6 +398,341 @@ impl NicknameEntry {
 
     pub fn set_min_offer(&mut self, amount: Amount) {
         self.min_offer = Some(amount);
+    }
+
+    pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
+        self.previous_txn_id = txn_id;
+        self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+// ============================================================================
+// Missing Ledger Entry Types (Added for calld compatibility)
+// ============================================================================
+
+/// SignerList entry - for multi-signature accounts
+/// LedgerEntryType: ltSIGNER_LIST = 'S' (0x53)
+#[derive(Debug, Clone)]
+pub struct SignerList {
+    pub account: AccountID,
+    pub signer_quorum: u32,
+    pub signers: Vec<SignerEntry>,
+    pub previous_txn_id: UInt256,
+    pub previous_txn_lgr_seq: u32,
+}
+
+impl SignerList {
+    pub fn new(account: AccountID, signer_quorum: u32) -> Self {
+        Self {
+            account,
+            signer_quorum,
+            signers: Vec::new(),
+            previous_txn_id: UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        }
+    }
+
+    pub fn add_signer(&mut self, signer: SignerEntry) {
+        self.signers.push(signer);
+    }
+
+    pub fn ledger_index(&self) -> UInt256 {
+        // SignerList index is hash of account + 'S'
+        let mut data = self.account.as_bytes().to_vec();
+        data.push(b'S');
+        let hash = crypto::sha256(&data);
+        UInt256::new(hash)
+    }
+
+    pub fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::SignerList
+    }
+
+    pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
+        self.previous_txn_id = txn_id;
+        self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+/// LedgerHashes entry - tracks ledger history
+/// LedgerEntryType: ltLEDGER_HASHES = 'h' (0x68)
+#[derive(Debug, Clone)]
+pub struct LedgerHashes {
+    pub ledger_index: u32,
+    pub hashes: Vec<UInt256>,
+    pub previous_txn_id: UInt256,
+    pub previous_txn_lgr_seq: u32,
+}
+
+impl LedgerHashes {
+    pub fn new(ledger_index: u32) -> Self {
+        Self {
+            ledger_index,
+            hashes: Vec::new(),
+            previous_txn_id: UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        }
+    }
+
+    pub fn add_hash(&mut self, hash: UInt256) {
+        self.hashes.push(hash);
+    }
+
+    pub fn ledger_index(&self) -> UInt256 {
+        // LedgerHashes index is based on the ledger index range
+        let mut data = [0u8; 4];
+        data.copy_from_slice(&self.ledger_index.to_be_bytes());
+        let hash = crypto::sha256(&data);
+        UInt256::new(hash)
+    }
+
+    pub fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::LedgerHashes
+    }
+
+    pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
+        self.previous_txn_id = txn_id;
+        self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+/// Amendment entry - represents a protocol amendment vote
+#[derive(Debug, Clone)]
+pub struct AmendmentVote {
+    pub amendment_id: UInt256,
+    pub name: String,
+    pub enabled: bool,
+    pub supported: bool,
+    pub vote_count: u32,
+}
+
+/// Amendments entry - tracks protocol amendments
+/// LedgerEntryType: ltAMENDMENTS = 'f' (0x66)
+#[derive(Debug, Clone)]
+pub struct Amendments {
+    pub amendments: Vec<AmendmentVote>,
+    pub previous_txn_id: UInt256,
+    pub previous_txn_lgr_seq: u32,
+}
+
+impl Amendments {
+    pub fn new() -> Self {
+        Self {
+            amendments: Vec::new(),
+            previous_txn_id: UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        }
+    }
+
+    pub fn register_amendment(&mut self, id: UInt256, name: String) {
+        self.amendments.push(AmendmentVote {
+            amendment_id: id,
+            name,
+            enabled: false,
+            supported: true,
+            vote_count: 0,
+        });
+    }
+
+    pub fn ledger_index(&self) -> UInt256 {
+        // Amendments has a fixed index
+        UInt256::from_be_bytes([0x41u8; 32]) // 'A' repeated
+    }
+
+    pub fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::Amendments
+    }
+
+    pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
+        self.previous_txn_id = txn_id;
+        self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+/// FeeSettings entry - tracks fee configuration
+/// LedgerEntryType: ltFEE_SETTINGS = 's' (0x73)
+#[derive(Debug, Clone)]
+pub struct FeeSettings {
+    pub base_fee: u64,
+    pub reference_fee_units: u32,
+    pub reserve_base: u64,
+    pub reserve_increment: u64,
+    pub previous_txn_id: UInt256,
+    pub previous_txn_lgr_seq: u32,
+}
+
+impl FeeSettings {
+    pub fn new(base_fee: u64, reserve_base: u64, reserve_increment: u64) -> Self {
+        Self {
+            base_fee,
+            reference_fee_units: 10,
+            reserve_base,
+            reserve_increment,
+            previous_txn_id: UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        }
+    }
+
+    pub fn ledger_index(&self) -> UInt256 {
+        // FeeSettings has a fixed index
+        UInt256::from_be_bytes([0x46u8; 32]) // 'F' repeated
+    }
+
+    pub fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::FeeSettings
+    }
+
+    pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
+        self.previous_txn_id = txn_id;
+        self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+// ============================================================================
+// Custom Callchain Ledger Entry Types
+// ============================================================================
+
+/// IssueRoot entry - tracks native asset issuance
+/// LedgerEntryType: ltISSUEROOT = 'i' (0x69)
+#[derive(Debug, Clone)]
+pub struct IssueRoot {
+    pub issuer: AccountID,
+    pub currency: Currency,
+    pub total_supply: Amount,
+    pub issued_amount: Amount,
+    pub transfer_rate: Option<u32>,
+    pub flags: u32,
+    pub previous_txn_id: UInt256,
+    pub previous_txn_lgr_seq: u32,
+}
+
+impl IssueRoot {
+    pub fn new(issuer: AccountID, currency: Currency, total_supply: Amount) -> Self {
+        Self {
+            issuer,
+            currency,
+            total_supply,
+            issued_amount: Amount::call(0),
+            transfer_rate: None,
+            flags: 0,
+            previous_txn_id: UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        }
+    }
+
+    pub fn ledger_index(&self) -> UInt256 {
+        // IssueRoot index is hash of issuer + currency
+        let mut data = Vec::new();
+        data.extend_from_slice(self.issuer.as_bytes());
+        data.extend_from_slice(self.currency.as_bytes());
+        let hash = crypto::sha256(&data);
+        UInt256::new(hash)
+    }
+
+    pub fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::IssueRoot
+    }
+
+    pub fn is_editable(&self) -> bool {
+        (self.flags & 0x00010000) != 0 // tfEnaddition
+    }
+
+    pub fn is_non_fungible(&self) -> bool {
+        (self.flags & 0x00001000) != 0 // tfNonFungible
+    }
+
+    pub fn update_issued(&mut self, amount: Amount) {
+        self.issued_amount = amount;
+    }
+
+    pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
+        self.previous_txn_id = txn_id;
+        self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+/// Invoice entry - represents a non-fungible token (NFT)
+/// LedgerEntryType: ltINVOICE = 'v' (0x76)
+#[derive(Debug, Clone)]
+pub struct Invoice {
+    pub invoice_id: UInt256,
+    pub issuer: AccountID,
+    pub owner: AccountID,
+    pub amount: Amount,
+    pub data: Vec<u8>,
+    pub flags: u32,
+    pub previous_txn_id: UInt256,
+    pub previous_txn_lgr_seq: u32,
+}
+
+impl Invoice {
+    pub fn new(invoice_id: UInt256, issuer: AccountID, amount: Amount) -> Self {
+        Self {
+            invoice_id,
+            issuer: issuer.clone(),
+            owner: issuer,
+            amount,
+            data: Vec::new(),
+            flags: 0,
+            previous_txn_id: UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        }
+    }
+
+    pub fn ledger_index(&self) -> UInt256 {
+        // Invoice index is the invoice_id
+        self.invoice_id
+    }
+
+    pub fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::Invoice
+    }
+
+    pub fn transfer(&mut self, new_owner: AccountID) {
+        self.owner = new_owner;
+    }
+
+    pub fn set_data(&mut self, data: Vec<u8>) {
+        self.data = data;
+    }
+
+    pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
+        self.previous_txn_id = txn_id;
+        self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+/// FeeRoot entry - tracks accumulated fees
+/// LedgerEntryType: ltFeeRoot = 'F' (0x46)
+#[derive(Debug, Clone)]
+pub struct FeeRoot {
+    pub balance: Amount,
+    pub last_ledger: u32,
+    pub previous_txn_id: UInt256,
+    pub previous_txn_lgr_seq: u32,
+}
+
+impl FeeRoot {
+    pub fn new() -> Self {
+        Self {
+            balance: Amount::call(0),
+            last_ledger: 0,
+            previous_txn_id: UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        }
+    }
+
+    pub fn ledger_index(&self) -> UInt256 {
+        // FeeRoot has a fixed index
+        UInt256::from_be_bytes([0x00u8; 32])
+    }
+
+    pub fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::FeeRoot
+    }
+
+    pub fn set_balance(&mut self, balance: Amount) {
+        self.balance = balance;
     }
 
     pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
@@ -855,11 +1208,32 @@ mod tests {
 
     #[test]
     fn test_ledger_entry_types() {
-        assert_eq!(LedgerEntryType::AccountRoot.as_u16(), 0x61);
-        assert_eq!(LedgerEntryType::CallState.as_u16(), 0x63);
-        assert_eq!(LedgerEntryType::Offer.as_u16(), 0x6F);
-        assert_eq!(LedgerEntryType::DirectoryNode.as_u16(), 0x64);
-        assert_eq!(LedgerEntryType::Nickname.as_u16(), 0x6E);
+        // Standard Ripple ledger entries
+        assert_eq!(LedgerEntryType::AccountRoot.as_u16(), 0x61);   // 'a'
+        assert_eq!(LedgerEntryType::CallState.as_u16(), 0x72);      // 'r' (was 'c')
+        assert_eq!(LedgerEntryType::Offer.as_u16(), 0x6F);          // 'o'
+        assert_eq!(LedgerEntryType::DirectoryNode.as_u16(), 0x64); // 'd'
+        assert_eq!(LedgerEntryType::Nickname.as_u16(), 0x6E);      // 'n'
+
+        // New entries added for calld compatibility
+        assert_eq!(LedgerEntryType::SignerList.as_u16(), 0x53);     // 'S'
+        assert_eq!(LedgerEntryType::LedgerHashes.as_u16(), 0x68);   // 'h'
+        assert_eq!(LedgerEntryType::Amendments.as_u16(), 0x66);     // 'f'
+        assert_eq!(LedgerEntryType::FeeSettings.as_u16(), 0x73);    // 's'
+
+        // Custom Callchain entries
+        assert_eq!(LedgerEntryType::FeeRoot.as_u16(), 0x46);        // 'F'
+        assert_eq!(LedgerEntryType::IssueRoot.as_u16(), 0x69);      // 'i'
+        assert_eq!(LedgerEntryType::Invoice.as_u16(), 0x76);        // 'v'
+
+        // Test from_u16 roundtrip
+        assert_eq!(LedgerEntryType::from_u16(0x61), Some(LedgerEntryType::AccountRoot));
+        assert_eq!(LedgerEntryType::from_u16(0x72), Some(LedgerEntryType::CallState));
+        assert_eq!(LedgerEntryType::from_u16(0x53), Some(LedgerEntryType::SignerList));
+        assert_eq!(LedgerEntryType::from_u16(0x68), Some(LedgerEntryType::LedgerHashes));
+        assert_eq!(LedgerEntryType::from_u16(0x66), Some(LedgerEntryType::Amendments));
+        assert_eq!(LedgerEntryType::from_u16(0x73), Some(LedgerEntryType::FeeSettings));
+        assert_eq!(LedgerEntryType::from_u16(0x9999), None);
     }
 
     #[test]
