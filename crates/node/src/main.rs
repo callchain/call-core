@@ -161,22 +161,51 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn generate_seed() {
-    use crypto::PrivateKey;
+    // Use the proper wallet generation
+    let wallet = crypto::Wallet::generate();
 
-    let private_key = PrivateKey::generate_secp256k1();
-    let public_key = private_key.to_public_key();
-
-    println!("Generated new key pair:");
-    println!("  Public Key: {}", to_hex(public_key.as_bytes()));
-    println!("  Seed: <not yet implemented - store this securely!>");
-    println!("\nWARNING: This is a placeholder implementation.");
-    println!("Do not use these keys for mainnet!");
+    println!("Generated new Callchain wallet:");
+    println!("  Address:    {}", wallet.address);
+    println!("  Public Key: {}", wallet.public_key);
+    println!("  Seed:       {}", wallet.seed);
+    println!("\nIMPORTANT: Store the seed securely!");
+    println!("This is the only way to recover your wallet.");
 }
 
 fn validate_seed(seed: &str) {
+    use crypto::validate_seed_format;
+    use crypto::wallet::decode_seed;
+
     println!("Validating seed: {}", seed);
-    // TODO: Implement seed validation
-    println!("Seed validation not yet implemented");
+
+    // Check seed starts with 's'
+    if !seed.starts_with('s') {
+        println!("⚠ Warning: Seed should start with 's' for Callchain");
+    }
+
+    // Validate the seed format
+    if !validate_seed_format(seed) {
+        println!("❌ Invalid seed: bad format or checksum");
+        return;
+    }
+
+    match decode_seed(seed) {
+        Some(entropy) => {
+            println!("✓ Valid seed");
+            println!("  Entropy: {} bytes", entropy.len());
+            println!("  Hex: {}", to_hex(&entropy));
+
+            // Try to derive wallet
+            if let Some(wallet) = crypto::Wallet::from_seed(seed) {
+                println!("\n  Derived wallet:");
+                println!("    Address: {}", wallet.address);
+                println!("    Public Key: {}", wallet.public_key[..40].to_string() + "...");
+            }
+        }
+        None => {
+            println!("❌ Invalid seed: could not decode");
+        }
+    }
 }
 
 async fn start_node(config: Config) -> anyhow::Result<()> {
