@@ -1,0 +1,38 @@
+# Call-core Node 2 Configuration
+# Dev Testnet - 3 Node Setup
+
+# Node identity
+node_name = "call-dev-node-2"
+
+# P2P network settings
+# Listen on all interfaces, port 51236 (different from node1)
+listen_address = "0.0.0.0:51236"
+
+# Bootstrap peers - connect to other nodes in the devnet
+peers = [
+    "call-dev-node-1:51235",
+    "call-dev-node-3:51235",
+]
+
+# Data directory for blockchain storage
+data_dir = "/data/node2"
+
+# Validator configuration
+# This node is a validator with a deterministic seed for testing
+validation_seed = "sEdVhK8P3Y8VBbmNrHjhsOXHuF8e7OIQnRhTF9r6e9gN8ZkIdYL"
+
+# Peer connection limits
+max_peers = 50
+target_peers = 10
+
+# RPC server configuration
+# Different port from node1
+rpc_enabled = true
+rpc_bind_address = "0.0.0.0"
+rpc_port = 5006
+
+# Enable admin RPC methods (for devnet testing)
+rpc_admin_enabled = true
+
+# Logging
+log_level = "debug"

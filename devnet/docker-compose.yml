@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # Node 1 - Primary validator
+  call-dev-node-1:
+    image: callchain/call-core:latest
+    container_name: call-dev-node-1
+    hostname: call-dev-node-1
+    volumes:
+      - ./node1/data:/data/node1
+      - ./node1/config.toml:/app/config.toml
+    ports:
+      - "5005:5005"   # RPC
+      - "51235:51235" # P2P
+    command: ["--config", "/app/config.toml", "start"]
+    networks:
+      - call-devnet
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/", "-H", "Content-Type: application/json", "-d", '{"jsonrpc":"2.0","method":"ping","id":1}']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Node 2 - Secondary validator
+  call-dev-node-2:
+    image: callchain/call-core:latest
+    container_name: call-dev-node-2
+    hostname: call-dev-node-2
+    volumes:
+      - ./node2/data:/data/node2
+      - ./node2/config.toml:/app/config.toml
+    ports:
+      - "5006:5006"   # RPC
+      - "51236:51236" # P2P
+    command: ["--config", "/app/config.toml", "start"]
+    networks:
+      - call-devnet
+    restart: unless-stopped
+    depends_on:
+      - call-dev-node-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5006/", "-H", "Content-Type: application/json", "-d", '{"jsonrpc":"2.0","method":"ping","id":1}']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Node 3 - Tertiary validator
+  call-dev-node-3:
+    image: callchain/call-core:latest
+    container_name: call-dev-node-3
+    hostname: call-dev-node-3
+    volumes:
+      - ./node3/data:/data/node3
+      - ./node3/config.toml:/app/config.toml
+    ports:
+      - "5007:5007"   # RPC
+      - "51237:51237" # P2P
+    command: ["--config", "/app/config.toml", "start"]
+    networks:
+      - call-devnet
+    restart: unless-stopped
+    depends_on:
+      - call-dev-node-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5007/", "-H", "Content-Type: application/json", "-d", '{"jsonrpc":"2.0","method":"ping","id":1}']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+networks:
+  call-devnet:
+    driver: bridge
+    name: call-devnet
