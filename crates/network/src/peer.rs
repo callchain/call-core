@@ -63,6 +63,18 @@ impl Peer {
         }
     }
 
+    pub fn with_node_id(address: SocketAddr, node_id: NodeID) -> Self {
+        Self {
+            address,
+            node_id: Some(node_id),
+            public_key: Vec::new(),
+            state: PeerState::Active,
+            stats: PeerStats::default(),
+            latency_ms: 0,
+            outbound_queue: Vec::new(),
+        }
+    }
+
     pub fn is_active(&self) -> bool {
         self.state == PeerState::Active
     }

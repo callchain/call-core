@@ -62,59 +62,133 @@ pub trait Backend: Send + Sync {
     }
 }
 
+/// Column family names for RocksDB
+pub mod cf {
+    pub const LEDGERS: &str = "ledgers";
+    pub const TRANSACTIONS: &str = "transactions";
+    pub const ACCOUNTS: &str = "accounts";
+    pub const METADATA: &str = "metadata";
+}
+
 /// RocksDB backend implementation
 pub struct RocksDBBackend {
-    // For now, use in-memory HashMap
-    // TODO: Replace with actual RocksDB
-    data: HashMap<UInt256, (NodeObjectType, Vec<u8>)>,
+    db: rocksdb::DB,
     path: String,
 }
 
 impl RocksDBBackend {
-    pub fn new(path: &str) -> Self {
-        Self {
-            data: HashMap::new(),
+    pub fn new(path: &str) -> Result<Self, StorageError> {
+        let mut opts = rocksdb::Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+
+        // Configure column families
+        let cf_names = vec![cf::LEDGERS, cf::TRANSACTIONS, cf::ACCOUNTS, cf::METADATA];
+        let cf_descriptors: Vec<_> = cf_names
+            .iter()
+            .map(|name| rocksdb::ColumnFamilyDescriptor::new(*name, opts.clone()))
+            .collect();
+
+        let db = rocksdb::DB::open_cf_descriptors(&opts, path, cf_descriptors)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+
+        Ok(Self {
+            db,
             path: path.to_string(),
-        }
+        })
     }
 
     /// Get the database path
     pub fn get_path(&self) -> &str {
         &self.path
     }
+
+    /// Get column family handle
+    fn get_cf(&self, cf_name: &str) -> Result<&rocksdb::ColumnFamily, StorageError> {
+        self.db.cf_handle(cf_name)
+            .ok_or_else(|| StorageError::DatabaseError(format!("Column family {} not found", cf_name)))
+    }
+
+    /// Get the appropriate column family for an object type
+    fn cf_for_type(&self, obj_type: NodeObjectType) -> Result<&rocksdb::ColumnFamily, StorageError> {
+        match obj_type {
+            NodeObjectType::Ledger => self.get_cf(cf::LEDGERS),
+            NodeObjectType::TransactionNode => self.get_cf(cf::TRANSACTIONS),
+            NodeObjectType::AccountNode => self.get_cf(cf::ACCOUNTS),
+            NodeObjectType::Unknown => self.get_cf(cf::METADATA),
+        }
+    }
 }
 
 impl Backend for RocksDBBackend {
     fn fetch(&self, hash: &UInt256) -> Option<NodeObject> {
-        self.data.get(hash).map(|(obj_type, data)| {
-            NodeObject::new(*obj_type, *hash, data.clone())
-        })
-    }
-
-    fn store(&mut self, obj: NodeObject) {
-        self.data.insert(obj.hash, (obj.object_type, obj.data));
-    }
-
-    fn delete(&mut self, hash: &UInt256) {
-        self.data.remove(hash);
-    }
-
-    fn exists(&self, hash: &UInt256) -> bool {
-        self.data.contains_key(hash)
-    }
-
-    fn write_batch(&mut self, batch: WriteBatch) {
-        for op in batch.ops {
-            match op {
-                WriteOp::Store(obj) => {
-                    self.data.insert(obj.hash, (obj.object_type, obj.data));
-                }
-                WriteOp::Delete(hash) => {
-                    self.data.remove(&hash);
+        // Try each column family in order
+        for cf_name in [cf::LEDGERS, cf::TRANSACTIONS, cf::ACCOUNTS, cf::METADATA] {
+            if let Ok(cf) = self.get_cf(cf_name) {
+                if let Ok(Some(data)) = self.db.get_cf(cf, hash.as_bytes()) {
+                    // Determine type from column family
+                    let obj_type = match cf_name {
+                        cf::LEDGERS => NodeObjectType::Ledger,
+                        cf::TRANSACTIONS => NodeObjectType::TransactionNode,
+                        cf::ACCOUNTS => NodeObjectType::AccountNode,
+                        _ => NodeObjectType::Unknown,
+                    };
+                    return Some(NodeObject::new(obj_type, *hash, data));
                 }
             }
         }
+        None
     }
+
+    fn store(&mut self, obj: NodeObject) {
+        if let Ok(cf) = self.cf_for_type(obj.object_type) {
+            let _ = self.db.put_cf(cf, obj.hash.as_bytes(), &obj.data);
+        }
+    }
+
+    fn delete(&mut self, hash: &UInt256) {
+        // Try to delete from all column families
+        for cf_name in [cf::LEDGERS, cf::TRANSACTIONS, cf::ACCOUNTS, cf::METADATA] {
+            if let Ok(cf) = self.get_cf(cf_name) {
+                let _ = self.db.delete_cf(cf, hash.as_bytes());
+            }
+        }
+    }
+
+    fn exists(&self, hash: &UInt256) -> bool {
+        self.fetch(hash).is_some()
+    }
+
+    fn write_batch(&mut self, batch: WriteBatch) {
+        let mut rocks_batch = rocksdb::WriteBatch::default();
+
+        for op in batch.ops {
+            match op {
+                WriteOp::Store(obj) => {
+                    if let Ok(cf) = self.cf_for_type(obj.object_type) {
+                        rocks_batch.put_cf(cf, obj.hash.as_bytes(), &obj.data);
+                    }
+                }
+                WriteOp::Delete(hash) => {
+                    // Delete from all column families
+                    for cf_name in [cf::LEDGERS, cf::TRANSACTIONS, cf::ACCOUNTS, cf::METADATA] {
+                        if let Ok(cf) = self.get_cf(cf_name) {
+                            rocks_batch.delete_cf(cf, hash.as_bytes());
+                        }
+                    }
+                }
+            }
+        }
+
+        let _ = self.db.write(rocks_batch);
+    }
+}
+
+/// Storage errors
+#[derive(Debug, thiserror::Error)]
+pub enum StorageError {
+    #[error("database error: {0}")]
+    DatabaseError(String),
 }
 
 /// Memory-backed backend for testing

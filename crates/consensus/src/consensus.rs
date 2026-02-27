@@ -233,6 +233,165 @@ impl Consensus {
     pub fn get_consensus_pct(&self) -> f64 {
         self.state.as_ref().map(|s| s.consensus_pct()).unwrap_or(0.0)
     }
+
+    /// Check if we should close the ledger (timeout or full)
+    pub fn should_close_ledger(&self) -> bool {
+        // In a real implementation, check if ledger is full or timeout reached
+        // For now, always return true if in Open phase
+        self.phase == ConsensusPhase::Open
+    }
+
+    /// Check if we should accept the current position
+    pub fn should_accept(&self) -> bool {
+        self.have_consensus()
+    }
+
+    /// Accept the current position and move to processing
+    pub fn accept_position(&mut self) {
+        self.accept_ledger();
+    }
+
+    /// Process the accepted ledger
+    pub fn process_ledger(&mut self) -> anyhow::Result<()> {
+        // Move to Accepted phase after processing
+        if self.phase == ConsensusPhase::Processing {
+            self.phase = ConsensusPhase::Accepted;
+        }
+        Ok(())
+    }
+
+    /// Check if the round is complete
+    pub fn is_round_complete(&self) -> bool {
+        self.phase == ConsensusPhase::Accepted
+    }
+
+    /// Detect and handle disputed transactions
+    /// Returns transactions that need to be voted on
+    pub fn detect_disputes(&mut self, tx_set: &[UInt256]) -> Vec<UInt256> {
+        // Track votes per transaction
+        let mut tx_votes: HashMap<UInt256, usize> = HashMap::new();
+
+        // Count our votes
+        for tx in tx_set {
+            *tx_votes.entry(*tx).or_default() += 1;
+        }
+
+        // Count peer votes from their proposals
+        if let Some(state) = &self.state {
+            for peer in state.peer_positions.values() {
+                // In real impl, we'd extract transactions from peer's position
+                // For now, mark all as potentially disputed if not matching
+            }
+        }
+
+        // Find transactions with less than 50% agreement
+        let total_peers = self.get_peer_count() + 1; // +1 for us
+        let threshold = total_peers / 2;
+
+        let disputed: Vec<UInt256> = tx_votes
+            .iter()
+            .filter(|(_, votes)| **votes <= threshold)
+            .map(|(tx, _)| *tx)
+            .collect();
+
+        if let Some(state) = &mut self.state {
+            state.disputed_txs = disputed.clone();
+        }
+        disputed
+    }
+
+    /// Vote on disputed transactions
+    pub fn vote_on_disputes(&mut self, acceptance_threshold: f64) -> Vec<(UInt256, bool)> {
+        let mut results = Vec::new();
+
+        let disputed = self.state.as_ref().map(|s| s.disputed_txs.clone()).unwrap_or_default();
+        for tx in &disputed {
+            // Count votes for this transaction
+            let mut votes_for = 0;
+            let mut votes_against = 0;
+
+            if let Some(state) = &self.state {
+                // Count peer votes
+                for peer in state.peer_positions.values() {
+                    // In real impl, check if peer's position includes this tx
+                    // Simplified: assume 60% acceptance
+                    votes_for += 1;
+                }
+
+                let total_votes = votes_for + votes_against;
+                if total_votes > 0 {
+                    let acceptance_rate = votes_for as f64 / total_votes as f64;
+                    let accepted = acceptance_rate >= acceptance_threshold;
+                    results.push((*tx, accepted));
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Calculate network close time based on peer proposals
+    pub fn calculate_close_time(&self) -> u32 {
+        if let Some(state) = &self.state {
+            let mut close_times: Vec<u32> = Vec::new();
+
+            // Add our close time
+            close_times.push(state.close_time);
+
+            // Collect peer close times
+            for peer in state.peer_positions.values() {
+                close_times.push(peer.proposal.close_time);
+            }
+
+            if close_times.is_empty() {
+                return state.close_time;
+            }
+
+            // Use median close time for consensus
+            close_times.sort();
+            let mid = close_times.len() / 2;
+            if close_times.len() % 2 == 0 {
+                // Even number - average the two middle values
+                ((close_times[mid - 1] as u64 + close_times[mid] as u64) / 2) as u32
+            } else {
+                // Odd number - take the middle
+                close_times[mid]
+            }
+        } else {
+            0
+        }
+    }
+
+    /// Check if close time has reached consensus
+    pub fn close_time_consensus(&self, threshold_pct: f64) -> bool {
+        if let Some(state) = &self.state {
+            let target_time = self.calculate_close_time();
+            let total_peers = state.peer_positions.len() + 1;
+
+            let mut matching = 1; // Count ourselves
+            for peer in state.peer_positions.values() {
+                if peer.proposal.close_time == target_time {
+                    matching += 1;
+                }
+            }
+
+            let agreement_pct = (matching as f64 / total_peers as f64) * 100.0;
+            agreement_pct >= threshold_pct
+        } else {
+            false
+        }
+    }
+
+    /// Start a new consensus round
+    pub fn start_new_round(&mut self) -> anyhow::Result<()> {
+        // Get the winning ledger to start the next round
+        let prev_ledger = self.get_winning_ledger().unwrap_or_else(|| {
+            self.state.as_ref().map(|s| s.previous_ledger).unwrap_or_else(UInt256::zero)
+        });
+        let next_ledger_index = self.ledger_index + 1;
+        self.start_round(prev_ledger, next_ledger_index);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

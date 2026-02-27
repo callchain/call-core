@@ -1,15 +1,19 @@
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use tracing::{info, warn};
 
 /// Node configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Node name for identification
     pub node_name: String,
 
     /// P2P listen address for incoming connections
+    #[serde(with = "serde_socket_addr")]
     pub listen_address: SocketAddr,
 
     /// Bootstrap peers to connect to
+    #[serde(with = "serde_vec_socket_addr")]
     pub peers: Vec<SocketAddr>,
 
     /// Data directory for database storage
@@ -40,6 +44,50 @@ pub struct Config {
     pub log_level: String,
 }
 
+mod serde_socket_addr {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::net::SocketAddr;
+
+    pub fn serialize<S>(addr: &SocketAddr, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&addr.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SocketAddr, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+mod serde_vec_socket_addr {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::net::SocketAddr;
+
+    pub fn serialize<S>(addrs: &[SocketAddr], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let strings: Vec<String> = addrs.iter().map(|a| a.to_string()).collect();
+        strings.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<SocketAddr>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let strings: Vec<String> = Vec::deserialize(deserializer)?;
+        strings
+            .into_iter()
+            .map(|s| s.parse().map_err(serde::de::Error::custom))
+            .collect()
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -65,10 +113,44 @@ impl Config {
         Self::default()
     }
 
-    /// Load configuration from a file
-    pub fn from_file(_path: &str) -> anyhow::Result<Self> {
-        // TODO: Implement TOML/JSON config file parsing
-        Ok(Self::default())
+    /// Load configuration from a TOML file
+    pub fn from_file(path: &str) -> anyhow::Result<Self> {
+        info!("Loading configuration from: {}", path);
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
+
+        let config: Config = toml::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("Failed to parse TOML config: {}", e))?;
+
+        info!("Configuration loaded successfully");
+        Ok(config)
+    }
+
+    /// Save configuration to a TOML file
+    pub fn save_to_file(&self, path: &str) -> anyhow::Result<()> {
+        let content = toml::to_string_pretty(self)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
+
+        std::fs::write(path, content)
+            .map_err(|e| anyhow::anyhow!("Failed to write config file: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Load from file or create with defaults if not exists
+    pub fn load_or_create(path: &str) -> anyhow::Result<Self> {
+        if std::path::Path::new(path).exists() {
+            Self::from_file(path)
+        } else {
+            warn!("Config file not found, using defaults: {}", path);
+            let config = Self::default();
+            // Try to save default config for user reference
+            if let Err(e) = config.save_to_file(path) {
+                warn!("Failed to save default config: {}", e);
+            }
+            Ok(config)
+        }
     }
 
     /// Add a bootstrap peer

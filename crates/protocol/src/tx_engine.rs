@@ -10,6 +10,7 @@
 use crate::ledger_entries::{AccountRoot, CallState, OfferEntry};
 use crate::transactions::{TER, Transaction, TxType};
 use crate::views::LedgerView;
+use crypto::{PublicKey, KeyType};
 use primitives::{AccountID, Currency, UInt256};
 
 /// Rules for transaction processing
@@ -151,9 +152,14 @@ impl TransactionEngine {
             }
         }
 
-        // Check transaction signature exists
+        // Check transaction signature exists and verify it
         if tx.txn_signature.is_none() {
             return TER::temEMPTY_SIGNER;
+        }
+
+        // Verify the transaction signature cryptographically
+        if !self.verify_transaction_signature(tx) {
+            return TER::temBAD_SIGNATURE;
         }
 
         // Type-specific preflight checks
@@ -613,6 +619,150 @@ impl TransactionEngine {
         account.owner_count = account.owner_count.saturating_add(1);
         TER::tesSUCCESS
     }
+
+    /// Verify transaction signature cryptographically
+    fn verify_transaction_signature(&self, tx: &Transaction) -> bool {
+        // Get the signing public key
+        let pk_bytes = match &tx.signing_pub_key {
+            Some(pk) => pk,
+            None => return false,
+        };
+
+        // Get the signature
+        let sig_bytes = match &tx.txn_signature {
+            Some(sig) => sig,
+            None => return false,
+        };
+
+        // Determine key type from public key length
+        // Secp256k1: 33 bytes (compressed), Ed25519: 32 bytes
+        let key_type = if pk_bytes.len() == 33 {
+            KeyType::Secp256k1
+        } else if pk_bytes.len() == 32 {
+            KeyType::Ed25519
+        } else {
+            return false;
+        };
+
+        // Create public key
+        let public_key = match key_type {
+            KeyType::Secp256k1 => {
+                if pk_bytes.len() != 33 {
+                    return false;
+                }
+                PublicKey::from_bytes(KeyType::Secp256k1, pk_bytes)
+            }
+            KeyType::Ed25519 => {
+                if pk_bytes.len() != 32 {
+                    return false;
+                }
+                PublicKey::from_bytes(KeyType::Ed25519, pk_bytes)
+            }
+        };
+
+        let public_key = match public_key {
+            Some(pk) => pk,
+            None => return false,
+        };
+
+        // Create signature
+        let signature = crypto::Signature::new(key_type, sig_bytes.clone());
+
+        // Get the transaction data to verify (excluding the signature itself)
+        let message_hash = self.get_transaction_signing_hash(tx);
+
+        // Verify the signature
+        public_key.verify(message_hash.as_bytes(), &signature)
+    }
+
+    /// Get the hash of transaction data that should be signed
+    fn get_transaction_signing_hash(&self, tx: &Transaction) -> UInt256 {
+        use crypto::sha512_half;
+
+        // Build signing data by combining critical transaction fields
+        let mut data = Vec::new();
+
+        // Add transaction type (as bytes)
+        data.extend_from_slice(&(tx.tx_type as u16).to_be_bytes());
+
+        // Add account
+        data.extend_from_slice(tx.account.as_bytes());
+
+        // Add sequence
+        data.extend_from_slice(&tx.sequence.to_be_bytes());
+
+        // Add fee
+        data.extend_from_slice(&tx.fee.to_be_bytes());
+
+        // Add transaction-specific fields based on type
+        match tx.tx_type {
+            TxType::Payment => {
+                if let Some(dest) = &tx.destination {
+                    data.extend_from_slice(dest.as_bytes());
+                }
+                if let Some(amt) = &tx.amount {
+                    // Add amount fields directly
+                    data.extend_from_slice(&amt.mantissa.to_be_bytes());
+                    data.extend_from_slice(&amt.exponent.to_be_bytes());
+                    data.extend_from_slice(amt.currency.as_bytes());
+                }
+            }
+            TxType::TrustSet => {
+                if let Some(issuer) = &tx.issuer {
+                    data.extend_from_slice(issuer.as_bytes());
+                }
+                if let Some(limit) = &tx.limit_amount {
+                    data.extend_from_slice(&limit.mantissa.to_be_bytes());
+                    data.extend_from_slice(&limit.exponent.to_be_bytes());
+                    data.extend_from_slice(limit.currency.as_bytes());
+                }
+            }
+            TxType::OfferCreate => {
+                if let Some(pays) = &tx.taker_pays {
+                    data.extend_from_slice(&pays.mantissa.to_be_bytes());
+                    data.extend_from_slice(&pays.exponent.to_be_bytes());
+                    data.extend_from_slice(pays.currency.as_bytes());
+                }
+                if let Some(gets) = &tx.taker_gets {
+                    data.extend_from_slice(&gets.mantissa.to_be_bytes());
+                    data.extend_from_slice(&gets.exponent.to_be_bytes());
+                    data.extend_from_slice(gets.currency.as_bytes());
+                }
+                data.extend_from_slice(&tx.offer_sequence.to_be_bytes());
+            }
+            TxType::OfferCancel => {
+                data.extend_from_slice(&tx.offer_sequence.to_be_bytes());
+            }
+            TxType::AccountSet => {
+                if let Some(domain) = &tx.domain {
+                    data.extend_from_slice(domain.as_slice());
+                }
+                if let Some(set_flag) = tx.set_flag {
+                    data.extend_from_slice(&set_flag.to_be_bytes());
+                }
+                if let Some(clear_flag) = tx.clear_flag {
+                    data.extend_from_slice(&clear_flag.to_be_bytes());
+                }
+            }
+            TxType::SetRegularKey => {
+                if let Some(key) = &tx.regular_key {
+                    data.extend_from_slice(key.as_bytes());
+                }
+            }
+            TxType::SignerListSet => {
+                data.extend_from_slice(&tx.signer_quorum.to_be_bytes());
+            }
+            _ => {}
+        }
+
+        // Add signing public key
+        if let Some(pk) = &tx.signing_pub_key {
+            data.extend_from_slice(pk.as_slice());
+        }
+
+        // Hash with SHA-512/256 for the final signing message
+        sha512_half(&data)
+    }
 }
 
 impl Default for TransactionEngine {
@@ -669,10 +819,16 @@ mod tests {
 
     #[test]
     fn test_payment_validation() {
+        use crypto::{PrivateKey, PublicKey, KeyType};
+
         let engine = TransactionEngine::new();
         let mut ledger = MockLedgerView::new();
 
-        // Create sender account
+        // Generate a key pair for signing
+        let private_key = PrivateKey::generate_secp256k1();
+        let public_key = private_key.to_public_key();
+
+        // Create sender account (use a fixed account for testing)
         let sender = AccountID::new([1u8; 20]);
         let sender_root = AccountRoot::new(sender).with_balance(1_000_000);
         ledger.set_account_root(&sender_root);
@@ -692,13 +848,16 @@ mod tests {
         );
         tx.sequence = 1;
         tx.fee = 1000;
+        tx.signing_pub_key = Some(public_key.as_bytes().to_vec());
 
         // Should fail preflight without signature
         let result = engine.process(&mut ctx, &tx);
         assert_eq!(result.ter, TER::temEMPTY_SIGNER);
 
-        // Add signature
-        tx.txn_signature = Some(vec![1, 2, 3, 4]);
+        // Sign the transaction
+        let message = engine.get_transaction_signing_hash(&tx);
+        let signature = private_key.sign(message.as_bytes());
+        tx.txn_signature = Some(signature.as_bytes().to_vec());
 
         // Should succeed now
         let result = engine.process(&mut ctx, &tx);
@@ -708,8 +867,14 @@ mod tests {
 
     #[test]
     fn test_insufficient_funds() {
+        use crypto::{PrivateKey, PublicKey};
+
         let engine = TransactionEngine::new();
         let mut ledger = MockLedgerView::new();
+
+        // Generate a key pair for signing
+        let private_key = PrivateKey::generate_secp256k1();
+        let public_key = private_key.to_public_key();
 
         // Create sender with low balance
         let sender = AccountID::new([1u8; 20]);
@@ -731,7 +896,12 @@ mod tests {
         );
         tx.sequence = 1;
         tx.fee = 1000;
-        tx.txn_signature = Some(vec![1, 2, 3, 4]);
+        tx.signing_pub_key = Some(public_key.as_bytes().to_vec());
+
+        // Sign the transaction
+        let message = engine.get_transaction_signing_hash(&tx);
+        let signature = private_key.sign(message.as_bytes());
+        tx.txn_signature = Some(signature.as_bytes().to_vec());
 
         let result = engine.process(&mut ctx, &tx);
         assert_eq!(result.ter, TER::terINSUFF_FEE);
@@ -739,8 +909,14 @@ mod tests {
 
     #[test]
     fn test_sequence_mismatch() {
+        use crypto::{PrivateKey, PublicKey};
+
         let engine = TransactionEngine::new();
         let mut ledger = MockLedgerView::new();
+
+        // Generate a key pair for signing
+        let private_key = PrivateKey::generate_secp256k1();
+        let public_key = private_key.to_public_key();
 
         // Create sender with sequence 5
         let sender = AccountID::new([1u8; 20]);
@@ -765,7 +941,12 @@ mod tests {
         );
         tx.sequence = 1; // Should be 5
         tx.fee = 1000;
-        tx.txn_signature = Some(vec![1, 2, 3, 4]);
+        tx.signing_pub_key = Some(public_key.as_bytes().to_vec());
+
+        // Sign the transaction
+        let message = engine.get_transaction_signing_hash(&tx);
+        let signature = private_key.sign(message.as_bytes());
+        tx.txn_signature = Some(signature.as_bytes().to_vec());
 
         let result = engine.process(&mut ctx, &tx);
         assert_eq!(result.ter, TER::terPRE_SEQ);

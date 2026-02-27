@@ -1,5 +1,6 @@
 use primitives::{AccountID, UInt256};
 use serialization::STObject;
+use shamap::{SHAMap, SHAMapItem, SHAMapType};
 
 /// LedgerIndex is the sequence number of a ledger
 pub type LedgerIndex = u32;
@@ -17,6 +18,10 @@ pub struct Fees {
     pub increment: u64,
     /// Commission rate (custom to Callchain)
     pub commission: u32,
+    /// Current load factor (1000 = 1.0x, 2000 = 2.0x)
+    pub load_factor: u32,
+    /// Target ledger close time in seconds
+    pub target_ledger_close_time: u32,
 }
 
 impl Default for Fees {
@@ -27,6 +32,8 @@ impl Default for Fees {
             reserve: 10_000_000, // 10 CALL
             increment: 2_000_000, // 2 CALL
             commission: 0,
+            load_factor: 1000, // 1.0x base
+            target_ledger_close_time: 5, // 5 seconds
         }
     }
 }
@@ -39,12 +46,57 @@ impl Fees {
             reserve,
             increment,
             commission: 0,
+            load_factor: 1000,
+            target_ledger_close_time: 5,
         }
     }
 
     /// Calculate the transaction fee based on fee units
     pub fn calculate_fee(&self, fee_units: u32) -> u64 {
-        (self.base as u128 * fee_units as u128 / self.units as u128) as u64
+        let base_fee = (self.base as u128 * fee_units as u128 / self.units as u128) as u64;
+        // Apply load factor
+        (base_fee as u128 * self.load_factor as u128 / 1000) as u64
+    }
+
+    /// Calculate load factor based on transaction queue pressure
+    /// Returns load factor in thousandths (1000 = 1.0x)
+    pub fn calculate_load_factor(
+        tx_count: usize,
+        tx_capacity: usize,
+        last_ledger_time: u32,
+        target_time: u32,
+    ) -> u32 {
+        if tx_capacity == 0 {
+            return 1000;
+        }
+
+        // Capacity factor: how full is the queue (0-1000)
+        let capacity_factor = ((tx_count as u64 * 1000) / tx_capacity as u64).min(1000) as u32;
+
+        // Time factor: how fast are ledgers closing relative to target
+        let time_factor = if last_ledger_time >= target_time {
+            // Ledgers closing slower than target, reduce fees
+            800
+        } else {
+            // Ledgers closing faster, increase fees
+            1200.min((target_time * 1000) / last_ledger_time.max(1))
+        };
+
+        // Combine factors: capacity has 70% weight, time has 30% weight
+        let load = (capacity_factor * 700 + time_factor * 300) / 1000;
+
+        // Clamp between 1.0x and 10.0x
+        load.max(1000).min(10000)
+    }
+
+    /// Update load factor based on network conditions
+    pub fn update_load_factor(&mut self, tx_count: usize, tx_capacity: usize, last_ledger_time: u32) {
+        self.load_factor = Self::calculate_load_factor(
+            tx_count,
+            tx_capacity,
+            last_ledger_time,
+            self.target_ledger_close_time,
+        );
     }
 }
 
@@ -125,10 +177,21 @@ impl LedgerInfo {
 }
 
 /// Ledger represents a complete ledger with state and transactions
-#[derive(Debug, Clone)]
 pub struct Ledger {
     pub info: LedgerInfo,
     pub transactions: Vec<UInt256>,
+    /// State tree containing all ledger entries (AccountRoot, CallState, etc.)
+    pub state_tree: SHAMap,
+}
+
+impl std::fmt::Debug for Ledger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ledger")
+            .field("info", &self.info)
+            .field("transactions", &self.transactions)
+            .field("state_tree", &"<SHAMap>")
+            .finish()
+    }
 }
 
 impl Ledger {
@@ -136,6 +199,7 @@ impl Ledger {
         Self {
             info,
             transactions: Vec::new(),
+            state_tree: SHAMap::new(SHAMapType::State),
         }
     }
 
@@ -144,7 +208,14 @@ impl Ledger {
     }
 
     pub fn create_child(&self, close_time: u32) -> Self {
-        Self::new(self.info.create_child(close_time))
+        let mut child = Self::new(self.info.create_child(close_time));
+        // Copy state tree from parent
+        for item in self.state_tree.iter() {
+            let key = item.key();
+            let cloned_item = SHAMapItem::new(key, item.data().to_vec());
+            let _ = child.state_tree.add_item(key, cloned_item);
+        }
+        child
     }
 
     pub fn get_hash(&self) -> UInt256 {
@@ -161,6 +232,84 @@ impl Ledger {
 
     pub fn transaction_count(&self) -> usize {
         self.transactions.len()
+    }
+
+    /// Add a state entry to the ledger
+    pub fn add_state_entry(&mut self, key: UInt256, data: Vec<u8>) -> bool {
+        let item = SHAMapItem::new(key, data);
+        self.state_tree.add_item(key, item)
+    }
+
+    /// Get a state entry by key
+    pub fn get_state_entry(&self, key: &UInt256) -> Option<&SHAMapItem> {
+        self.state_tree.get_item(key)
+    }
+
+    /// Compute the account hash (state tree root hash)
+    pub fn compute_account_hash(&self) -> UInt256 {
+        self.state_tree.get_root_hash()
+    }
+
+    /// Update the ledger hashes (account_hash and tx_hash)
+    /// This should be called before finalizing the ledger
+    pub fn update_hashes(&mut self) {
+        // Update account hash from state tree
+        self.info.account_hash = self.compute_account_hash();
+
+        // Compute transaction tree hash
+        self.info.tx_hash = self.compute_tx_hash();
+
+        // Compute overall ledger hash
+        self.info.hash = self.compute_ledger_hash();
+    }
+
+    /// Compute the transaction tree hash
+    fn compute_tx_hash(&self) -> UInt256 {
+        use crypto::sha512_half;
+
+        if self.transactions.is_empty() {
+            return sha512_half(b"");
+        }
+
+        // Build a simple Merkle tree of transactions
+        let mut hashes: Vec<UInt256> = self.transactions.clone();
+
+        while hashes.len() > 1 {
+            let mut next_level = Vec::new();
+            for chunk in hashes.chunks(2) {
+                let mut data = Vec::new();
+                data.extend_from_slice(chunk[0].as_bytes());
+                if chunk.len() > 1 {
+                    data.extend_from_slice(chunk[1].as_bytes());
+                } else {
+                    // Duplicate the last hash if odd number
+                    data.extend_from_slice(chunk[0].as_bytes());
+                }
+                next_level.push(sha512_half(&data));
+            }
+            hashes = next_level;
+        }
+
+        hashes[0]
+    }
+
+    /// Compute the overall ledger hash
+    fn compute_ledger_hash(&self) -> UInt256 {
+        use crypto::sha512_half;
+
+        // Ledger hash includes key fields from LedgerInfo
+        let mut data = Vec::new();
+        data.extend_from_slice(&self.info.seq.to_be_bytes());
+        data.extend_from_slice(self.info.parent_hash.as_bytes());
+        data.extend_from_slice(self.info.tx_hash.as_bytes());
+        data.extend_from_slice(self.info.account_hash.as_bytes());
+        data.extend_from_slice(&self.info.close_time.to_be_bytes());
+        data.extend_from_slice(&self.info.parent_close_time.to_be_bytes());
+        data.extend_from_slice(&self.info.close_time_resolution.to_be_bytes());
+        data.extend_from_slice(&self.info.drops.to_be_bytes());
+        data.extend_from_slice(&self.info.close_flags.to_be_bytes());
+
+        sha512_half(&data)
     }
 }
 

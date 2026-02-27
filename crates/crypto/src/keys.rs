@@ -146,6 +146,32 @@ pub struct PublicKey {
 }
 
 impl PublicKey {
+    pub fn new(key_type: KeyType, data: Vec<u8>) -> Self {
+        Self { key_type, data }
+    }
+
+    pub fn from_bytes(key_type: KeyType, bytes: &[u8]) -> Option<Self> {
+        // Validate key length
+        match key_type {
+            KeyType::Secp256k1 => {
+                // Secp256k1 compressed public key is 33 bytes
+                if bytes.len() != 33 {
+                    return None;
+                }
+            }
+            KeyType::Ed25519 => {
+                // Ed25519 public key is 32 bytes
+                if bytes.len() != 32 {
+                    return None;
+                }
+            }
+        }
+        Some(Self {
+            key_type,
+            data: bytes.to_vec(),
+        })
+    }
+
     pub fn key_type(&self) -> KeyType {
         self.key_type
     }

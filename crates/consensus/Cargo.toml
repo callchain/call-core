@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+crypto = { path = "../crypto" }
 primitives = { path = "../primitives" }
 protocol = { path = "../protocol" }
 serialization = { path = "../serialization" }
@@ -13,6 +14,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
