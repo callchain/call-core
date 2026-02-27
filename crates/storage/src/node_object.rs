@@ -13,6 +13,8 @@ pub enum NodeObjectType {
     AccountNode = 3,
     /// Transaction tree node
     TransactionNode = 4,
+    /// Node metadata (peer info, config, etc.)
+    Metadata = 5,
 }
 
 impl NodeObjectType {
@@ -23,6 +25,7 @@ impl NodeObjectType {
             1 => Some(Self::Ledger),
             3 => Some(Self::AccountNode),
             4 => Some(Self::TransactionNode),
+            5 => Some(Self::Metadata),
             _ => None,
         }
     }

@@ -54,29 +54,137 @@ impl Message {
     }
 
     /// Create a validation message
-    pub fn validation(_v: &Validation) -> Self {
+    pub fn validation(v: &Validation) -> Self {
         // Serialize validation using the serialization crate
-        let serializer = Serializer::new();
-        // Add validation fields to serializer
-        // This is a simplified placeholder
+        let mut serializer = Serializer::with_capacity(256);
+
+        // Add validation fields
+        serializer.add256(v.node_id.0);
+        serializer.add256(v.ledger_hash);
+        serializer.add32(v.ledger_index as u32);
+        serializer.add32(v.sign_time);
+        serializer.add32(v.close_time);
+
+        // Add optional signature (use VL encoding)
+        if let Some(ref sig) = v.signature {
+            serializer.add_vl(sig);
+        } else {
+            serializer.add_vl(&[]);
+        }
+
+        // Add optional signing public key
+        if let Some(ref pk) = v.signing_pub_key {
+            serializer.add_vl(pk);
+        } else {
+            serializer.add_vl(&[]);
+        }
+
         let payload = serializer.finish();
         Self::new(MessageType::Validation, payload)
     }
 
     /// Create a proposal message
-    pub fn propose(_p: &Proposal) -> Self {
+    pub fn propose(p: &Proposal) -> Self {
         // Serialize proposal
-        let serializer = Serializer::new();
+        let mut serializer = Serializer::with_capacity(256);
+
         // Add proposal fields
+        serializer.add256(p.node_id.0);
+        serializer.add256(p.previous_ledger);
+        serializer.add256(p.position);
+        serializer.add32(p.propose_seq);
+        serializer.add32(p.close_time);
+
+        // Add optional signature (use VL encoding)
+        if let Some(ref sig) = p.signature {
+            serializer.add_vl(sig);
+        } else {
+            serializer.add_vl(&[]);
+        }
+
+        // Add optional signing public key
+        if let Some(ref pk) = p.signing_pub_key {
+            serializer.add_vl(pk);
+        } else {
+            serializer.add_vl(&[]);
+        }
+
         let payload = serializer.finish();
         Self::new(MessageType::Propose, payload)
     }
 
     /// Create a transaction message
-    pub fn transaction(_tx: &Transaction) -> Self {
-        // Serialize transaction
-        let serializer = Serializer::new();
-        // Add transaction fields
+    pub fn transaction(tx: &Transaction) -> Self {
+        // Serialize transaction - uses STObject format for transaction data
+        let mut serializer = Serializer::with_capacity(512);
+
+        // Serialize transaction type
+        serializer.add16(tx.tx_type.as_i16() as u16);
+
+        // Serialize account
+        serializer.add_account(tx.account);
+
+        // Serialize sequence
+        serializer.add32(tx.sequence);
+
+        // Serialize fee
+        serializer.add64(tx.fee);
+
+        // Serialize signing public key if present
+        if let Some(ref pk) = tx.signing_pub_key {
+            serializer.add_vl(pk);
+        } else {
+            serializer.add_vl(&[]);
+        }
+
+        // Serialize transaction signature if present
+        if let Some(ref sig) = tx.txn_signature {
+            serializer.add_vl(sig);
+        } else {
+            serializer.add_vl(&[]);
+        }
+
+        // Serialize transaction hash
+        serializer.add256(tx.hash);
+
+        // Serialize transaction-specific fields based on type
+        match tx.tx_type {
+            protocol::TxType::Payment => {
+                if let Some(dest) = tx.destination {
+                    serializer.add_account(dest);
+                }
+                if let Some(amt) = tx.amount {
+                    serializer.add_amount(amt);
+                }
+                if let Some(tag) = tx.destination_tag {
+                    serializer.add32(tag);
+                }
+            }
+            protocol::TxType::TrustSet => {
+                if let Some(limit) = tx.limit_amount {
+                    serializer.add_amount(limit);
+                }
+                if let Some(issuer) = tx.issuer {
+                    serializer.add_account(issuer);
+                }
+            }
+            protocol::TxType::OfferCreate => {
+                if let Some(pays) = tx.taker_pays {
+                    serializer.add_amount(pays);
+                }
+                if let Some(gets) = tx.taker_gets {
+                    serializer.add_amount(gets);
+                }
+                serializer.add32(tx.offer_sequence);
+            }
+            protocol::TxType::OfferCancel => {
+                serializer.add32(tx.offer_sequence);
+            }
+            _ => {
+                // Other transaction types - basic serialization only
+            }
+        }
+
         let payload = serializer.finish();
         Self::new(MessageType::Transaction, payload)
     }

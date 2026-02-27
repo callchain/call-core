@@ -147,7 +147,7 @@ impl LedgerInfo {
     pub fn genesis() -> Self {
         Self {
             seq: 1,
-            hash: UInt256::zero(), // TODO: compute actual genesis hash
+            hash: UInt256::zero(), // Note: Ledger::genesis() computes the actual hash via update_hashes()
             parent_hash: UInt256::zero(),
             tx_hash: UInt256::zero(),
             account_hash: UInt256::zero(),
@@ -204,7 +204,11 @@ impl Ledger {
     }
 
     pub fn genesis() -> Self {
-        Self::new(LedgerInfo::genesis())
+        let mut ledger = Self::new(LedgerInfo::genesis());
+        // Compute the genesis ledger hash
+        // The genesis hash is computed from its contents (empty state tree, no transactions)
+        ledger.update_hashes();
+        ledger
     }
 
     pub fn create_child(&self, close_time: u32) -> Self {

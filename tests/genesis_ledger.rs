@@ -200,12 +200,15 @@ fn test_genesis_balances() {
 fn test_genesis_ledger_hash() {
     let mut ledger = Ledger::genesis();
 
-    // Initially, hashes may be zero
-    assert_eq!(
+    // Genesis ledger should have hash computed on creation
+    assert_ne!(
         ledger.info.hash,
         UInt256::zero(),
-        "Genesis hash should be zero before computation"
+        "Genesis hash should be computed on creation"
     );
+
+    // Save the initial hash
+    let initial_hash = ledger.info.hash;
 
     // Add some state
     let account = AccountID::new([1u8; 20]);
@@ -230,8 +233,11 @@ fn test_genesis_ledger_hash() {
         "Transaction hash should be computed (even if empty)"
     );
 
-    // Note: Ledger hash might still be zero in the simplified implementation
-    // In a full implementation, this would be computed from all ledger fields
+    // Ledger hash should have changed after adding state
+    assert_ne!(
+        ledger.info.hash, initial_hash,
+        "Ledger hash should change after adding state"
+    );
 }
 
 /// Test creating a child ledger from genesis

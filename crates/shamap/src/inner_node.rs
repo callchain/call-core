@@ -9,6 +9,8 @@ pub struct SHAMapInnerNode {
     is_branch: u16,
     #[allow(dead_code)]
     seq: u32,
+    /// Cached node hash (computed from child hashes)
+    hash: UInt256,
 }
 
 impl SHAMapInnerNode {
@@ -21,7 +23,13 @@ impl SHAMapInnerNode {
             ],
             is_branch: 0,
             seq,
+            hash: UInt256::zero(),
         }
+    }
+
+    /// Get the cached node hash
+    pub fn get_node_hash(&self) -> UInt256 {
+        self.hash
     }
 
     pub fn get_child(&self, branch: usize) -> Option<&crate::SHAMapAbstractNode> {
@@ -65,6 +73,7 @@ impl SHAMapInnerNode {
 
     pub fn compute_hash(&mut self) {
         if self.is_branch == 0 {
+            self.hash = UInt256::zero();
             return;
         }
 
@@ -75,7 +84,7 @@ impl SHAMapInnerNode {
             serializer.add256(self.hashes[i]);
         }
 
-        let _hash = crypto::sha512_half(serializer.as_slice());
+        self.hash = crypto::sha512_half(serializer.as_slice());
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -105,6 +114,8 @@ impl SHAMapInnerNode {
             }
         }
 
+        // Recompute hash after deserialization
+        node.compute_hash();
         Some(node)
     }
 }
@@ -145,8 +156,14 @@ impl SHAMapInnerNodeV2 {
         self.common
     }
 
+    /// Get the cached node hash (delegates to inner node)
+    pub fn get_node_hash(&self) -> UInt256 {
+        self.inner.get_node_hash()
+    }
+
     pub fn compute_hash(&mut self) {
         if self.inner.is_branch == 0 {
+            self.inner.hash = UInt256::zero();
             return;
         }
 
@@ -163,7 +180,7 @@ impl SHAMapInnerNodeV2 {
         let common_bytes = &self.common.as_bytes()[..common_len];
         serializer.add_vl(common_bytes);
 
-        let _hash = crypto::sha512_half(serializer.as_slice());
+        self.inner.hash = crypto::sha512_half(serializer.as_slice());
     }
 
     pub fn serialize(&self) -> Vec<u8> {

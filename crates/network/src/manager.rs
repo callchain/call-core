@@ -91,9 +91,13 @@ impl NetworkManager {
         let (command_tx, command_rx) = mpsc::channel(100);
         let (event_tx, event_rx) = mpsc::channel(100);
 
+        // Generate a deterministic public key from node_id
+        // In a full implementation, this would be the actual public key from the node's keypair
+        let node_public_key = crypto::sha256(node_id.as_bytes()).to_vec();
+
         let hello_message = HelloMessage {
             protocol_version: crate::connection::PROTOCOL_VERSION,
-            node_public_key: vec![], // TODO: Add actual public key
+            node_public_key,
             node_id: node_id.as_bytes().to_vec(),
             ledger_index: 1,
             ledger_hash: UInt256::zero(),

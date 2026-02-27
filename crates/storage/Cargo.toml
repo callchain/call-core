@@ -8,6 +8,7 @@ license.workspace = true
 primitives = { path = "../primitives" }
 shamap = { path = "../shamap" }
 serialization = { path = "../serialization" }
+crypto = { path = "../crypto" }
 rocksdb = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

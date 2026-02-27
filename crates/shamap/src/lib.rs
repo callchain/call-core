@@ -68,8 +68,8 @@ impl SHAMapAbstractNode {
 
     pub fn hash(&self) -> UInt256 {
         match self {
-            Self::Inner(_) => UInt256::zero(),
-            Self::InnerV2(_) => UInt256::zero(),
+            Self::Inner(inner) => inner.get_node_hash(),
+            Self::InnerV2(inner_v2) => inner_v2.get_node_hash(),
             Self::Leaf(leaf) => leaf.hash(),
         }
     }

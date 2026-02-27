@@ -9,6 +9,7 @@ primitives = { path = "../primitives" }
 protocol = { path = "../protocol" }
 serialization = { path = "../serialization" }
 consensus = { path = "../consensus" }
+crypto = { path = "../crypto" }
 tokio = { workspace = true }
 prost = { workspace = true }
 bytes = { workspace = true }

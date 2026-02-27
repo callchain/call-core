@@ -8,6 +8,40 @@ fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// Make a JSON-RPC request to the node
+async fn rpc_request(
+    rpc_url: &str,
+    method: &str,
+    params: Option<serde_json::Value>,
+) -> anyhow::Result<serde_json::Value> {
+    let client = reqwest::Client::new();
+
+    let request_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1
+    });
+
+    let response = client
+        .post(rpc_url)
+        .json(&request_body)
+        .send()
+        .await?;
+
+    let response_json: serde_json::Value = response.json().await?;
+
+    // Check for RPC error
+    if let Some(error) = response_json.get("error") {
+        let error_msg = error.get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("Unknown error");
+        return Err(anyhow::anyhow!("RPC error: {}", error_msg));
+    }
+
+    Ok(response_json.get("result").cloned().unwrap_or(serde_json::json!({})))
+}
+
 fn parse_log_level(level: &str) -> tracing::Level {
     match level.to_lowercase().as_str() {
         "trace" => tracing::Level::TRACE,
@@ -236,23 +270,78 @@ async fn start_node(config: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn show_ledger_info(_config: &Config, ledger: &str) -> anyhow::Result<()> {
-    println!("Ledger information for: {}", ledger);
-    // TODO: Implement ledger info retrieval
-    println!("Ledger info not yet implemented");
+async fn show_ledger_info(config: &Config, ledger: &str) -> anyhow::Result<()> {
+    let rpc_url = format!("http://{}:{}", config.rpc_bind_address, config.rpc_port);
+
+    // Parse ledger parameter
+    let params = if ledger == "current" {
+        None // Use ledger_current for current ledger
+    } else if ledger == "validated" || ledger == "closed" {
+        Some(serde_json::json!({"ledger_index": "validated"}))
+    } else if let Ok(index) = ledger.parse::<u64>() {
+        Some(serde_json::json!({"ledger_index": index}))
+    } else {
+        Some(serde_json::json!({"ledger_hash": ledger}))
+    };
+
+    // Call the appropriate RPC method
+    let result = if ledger == "current" {
+        rpc_request(&rpc_url, "ledger_current", None).await?
+    } else {
+        rpc_request(&rpc_url, "ledger", params).await?
+    };
+
+    // Format and display the result
+    println!("Ledger Information:");
+    println!("{}", serde_json::to_string_pretty(&result)?);
+
     Ok(())
 }
 
-async fn submit_transaction(_config: &Config, tx_blob: &str) -> anyhow::Result<()> {
-    println!("Submitting transaction: {}", tx_blob);
-    // TODO: Implement transaction submission
-    println!("Transaction submission not yet implemented");
+async fn submit_transaction(config: &Config, tx_blob: &str) -> anyhow::Result<()> {
+    let rpc_url = format!("http://{}:{}", config.rpc_bind_address, config.rpc_port);
+
+    println!("Submitting transaction...");
+
+    let params = serde_json::json!({"tx_blob": tx_blob});
+    let result = rpc_request(&rpc_url, "submit", Some(params)).await?;
+
+    // Display the result
+    println!("Submission Result:");
+    println!("{}", serde_json::to_string_pretty(&result)?);
+
+    // Extract and display key information
+    if let Some(engine_result) = result.get("engine_result").and_then(|v| v.as_str()) {
+        println!("\nEngine Result: {}", engine_result);
+    }
+    if let Some(engine_result_message) = result.get("engine_result_message").and_then(|v| v.as_str()) {
+        println!("Result Message: {}", engine_result_message);
+    }
+
     Ok(())
 }
 
-async fn show_account_info(_config: &Config, account: &str) -> anyhow::Result<()> {
+async fn show_account_info(config: &Config, account: &str) -> anyhow::Result<()> {
+    let rpc_url = format!("http://{}:{}", config.rpc_bind_address, config.rpc_port);
+
     println!("Account information for: {}", account);
-    // TODO: Implement account info retrieval
-    println!("Account info not yet implemented");
+
+    // Parse account - could be address or public key
+    // For now, assume it's a hex-encoded account ID
+    let account_param = if account.len() == 40 && account.chars().all(|c| c.is_ascii_hexdigit()) {
+        account.to_string()
+    } else {
+        // Try to decode as base58 or other format if needed
+        // For now, pass as-is
+        account.to_string()
+    };
+
+    let params = serde_json::json!({"account": account_param});
+    let result = rpc_request(&rpc_url, "account_info", Some(params)).await?;
+
+    // Format and display the result
+    println!("Account Information:");
+    println!("{}", serde_json::to_string_pretty(&result)?);
+
     Ok(())
 }

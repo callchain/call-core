@@ -319,8 +319,8 @@ fn test_call_state_operations() {
     assert_eq!(call_state.account, account);
     assert_eq!(call_state.issuer, issuer);
     assert_eq!(call_state.currency, currency);
-    assert!(call_state.is_authorized());
-    assert!(!call_state.is_frozen());
+    assert!(call_state.is_authorized(&account));
+    assert!(!call_state.is_frozen(&account));
 }
 
 /// Test OfferEntry operations

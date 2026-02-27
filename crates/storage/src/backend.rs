@@ -115,6 +115,7 @@ impl RocksDBBackend {
             NodeObjectType::Ledger => self.get_cf(cf::LEDGERS),
             NodeObjectType::TransactionNode => self.get_cf(cf::TRANSACTIONS),
             NodeObjectType::AccountNode => self.get_cf(cf::ACCOUNTS),
+            NodeObjectType::Metadata => self.get_cf(cf::METADATA),
             NodeObjectType::Unknown => self.get_cf(cf::METADATA),
         }
     }
@@ -131,6 +132,7 @@ impl Backend for RocksDBBackend {
                         cf::LEDGERS => NodeObjectType::Ledger,
                         cf::TRANSACTIONS => NodeObjectType::TransactionNode,
                         cf::ACCOUNTS => NodeObjectType::AccountNode,
+                        cf::METADATA => NodeObjectType::Metadata,
                         _ => NodeObjectType::Unknown,
                     };
                     return Some(NodeObject::new(obj_type, *hash, data));

@@ -381,11 +381,29 @@ impl GenesisLoader {
     }
 
     fn calculate_genesis_hash(
-        _info: &LedgerInfo,
-        _txs: &[Transaction],
+        info: &LedgerInfo,
+        txs: &[Transaction],
     ) -> UInt256 {
-        // In a real implementation, this would compute the actual hash
-        UInt256::zero()
+        use serialization::Serializer;
+        use crypto::HashPrefix;
+
+        // Serialize ledger header data
+        let mut serializer = Serializer::with_capacity(256);
+        serializer.add32(HashPrefix::LedgerMaster.as_u32());
+        serializer.add32(info.seq);
+        serializer.add32(info.close_time);
+        serializer.add32(info.parent_close_time);
+        serializer.add32(info.close_time_resolution as u32);
+        serializer.add8(info.close_flags);
+        serializer.add64(info.drops);
+
+        // Add transaction hashes
+        for tx in txs {
+            serializer.add256(tx.get_hash());
+        }
+
+        // Compute the hash
+        crypto::sha512_half(serializer.as_slice())
     }
 }
 
