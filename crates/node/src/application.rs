@@ -116,6 +116,71 @@ pub struct Application {
     tx_queue: protocol::TransactionQueue,
     /// Transaction history for account_tx and tx_history
     tx_history: TransactionHistory,
+    /// Blacklist store for banned peers/accounts
+    blacklist: BlacklistStore,
+}
+
+/// Blacklist store for managing banned peers and accounts
+#[derive(Debug, Default)]
+pub struct BlacklistStore {
+    /// Banned peer addresses
+    peers: std::collections::HashSet<String>,
+    /// Banned account IDs (hex)
+    accounts: std::collections::HashSet<String>,
+}
+
+impl BlacklistStore {
+    pub fn new() -> Self {
+        Self {
+            peers: std::collections::HashSet::new(),
+            accounts: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Add a peer to the blacklist
+    pub fn add_peer(&mut self, peer: String) {
+        self.peers.insert(peer);
+    }
+
+    /// Remove a peer from the blacklist
+    pub fn remove_peer(&mut self, peer: &str) -> bool {
+        self.peers.remove(peer)
+    }
+
+    /// Check if a peer is blacklisted
+    pub fn is_peer_blacklisted(&self, peer: &str) -> bool {
+        self.peers.contains(peer)
+    }
+
+    /// Add an account to the blacklist
+    pub fn add_account(&mut self, account: String) {
+        self.accounts.insert(account);
+    }
+
+    /// Remove an account from the blacklist
+    pub fn remove_account(&mut self, account: &str) -> bool {
+        self.accounts.remove(account)
+    }
+
+    /// Check if an account is blacklisted
+    pub fn is_account_blacklisted(&self, account: &str) -> bool {
+        self.accounts.contains(account)
+    }
+
+    /// Get all blacklisted peers
+    pub fn get_peers(&self) -> Vec<&String> {
+        self.peers.iter().collect()
+    }
+
+    /// Get all blacklisted accounts
+    pub fn get_accounts(&self) -> Vec<&String> {
+        self.accounts.iter().collect()
+    }
+
+    /// Get total count of blacklisted entries
+    pub fn count(&self) -> usize {
+        self.peers.len() + self.accounts.len()
+    }
 }
 
 impl Application {
@@ -166,6 +231,9 @@ impl Application {
         // Initialize transaction history
         let tx_history = TransactionHistory::new();
 
+        // Initialize blacklist store
+        let blacklist = BlacklistStore::new();
+
         info!("Application initialized with node_id: {:?}", node_id);
 
         Ok(Self {
@@ -184,6 +252,7 @@ impl Application {
             ledger_state,
             tx_queue,
             tx_history,
+            blacklist,
         })
     }
 
@@ -226,6 +295,16 @@ impl Application {
     /// Get the transaction history (mutable)
     pub fn get_tx_history_mut(&mut self) -> &mut TransactionHistory {
         &mut self.tx_history
+    }
+
+    /// Get the blacklist store
+    pub fn get_blacklist(&self) -> &BlacklistStore {
+        &self.blacklist
+    }
+
+    /// Get the blacklist store (mutable)
+    pub fn get_blacklist_mut(&mut self) -> &mut BlacklistStore {
+        &mut self.blacklist
     }
 
     /// Index a transaction for account history

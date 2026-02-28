@@ -174,7 +174,7 @@ pub enum TxType {
 | connect | ✅ Implemented | Sends NetworkCommand::Connect to network manager |
 | unl_list | ✅ Implemented | Returns actual UNL from consensus |
 | validator_list_sites | ✅ Implemented | Returns configured validator list sites |
-| blacklist | ✅ Implemented | Returns blacklist with add/remove support |
+| blacklist | ✅ Implemented | Full blacklist store with add/remove/get for peers/accounts |
 
 ### Custom Callchain Commands
 
@@ -387,8 +387,24 @@ pub enum TxType {
 - The codebase has excellent architecture with clean separation across crates
 - All 260+ tests passing
 
+## Known Limitations (Stubs Requiring Infrastructure)
+
+The following methods have partial implementations that would require additional infrastructure for full functionality:
+
+| Method | Current Status | Notes |
+|--------|---------------|-------|
+| wallet_lock | ⚠️ Basic | Returns success; needs secure key storage for full implementation |
+| ledger_request | ⚠️ Basic | Returns peer count; needs network message sending infrastructure |
+| log_rotate | ⚠️ Basic | Returns success; needs log file management system |
+| feature | ⚠️ Basic | In-memory only; needs persistent feature flag storage |
+| account_issues | ⚠️ Basic | Returns empty array; needs issue tracking database |
+| unsubscribe | ⚠️ Basic | Returns success; needs WebSocket subscription tracking |
+| submit_multisigned | ⚠️ Basic | Placeholder encoding; needs full transaction serialization |
+| sign_for | ⚠️ Basic | Placeholder encoding; needs full transaction serialization |
+| WebSocket handle_connection | ⚠️ Basic | Placeholder; actual handling in handle_socket method |
+
 ## Estimated Effort - ✅ COMPLETED
 
 - ✅ **Critical fixes**: COMPLETED
 - ✅ **Custom features completion**: COMPLETED
-- ✅ **Full feature parity**: 100% COMPLETE
+- ✅ **Full feature parity**: 95% COMPLETE (core functionality 100%, admin features 80%)

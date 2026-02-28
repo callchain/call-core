@@ -1515,25 +1515,57 @@ impl RpcHandler for AppRpcHandler {
             }
 
             "blacklist" => {
-                let _app = self.app.read().await;
+                let mut app = self.app.write().await;
                 let params = params.as_ref();
-
-                // Get blacklist - in a real implementation this would come from overlay
-                let blacklist_list: Vec<serde_json::Value> = vec![];
+                let blacklist = app.get_blacklist_mut();
 
                 // If params has "add" or "remove", modify blacklist
+                let mut added = false;
+                let mut removed = false;
+
                 if let Some(add) = params.and_then(|p| p.get("add")).and_then(|v| v.as_str()) {
-                    // In a real implementation, this would add to the blacklist
-                    tracing::info!("Would add to blacklist: {}", add);
+                    // Determine if it's a peer (IP:port) or account (hex)
+                    if add.contains(':') {
+                        blacklist.add_peer(add.to_string());
+                    } else {
+                        blacklist.add_account(add.to_string());
+                    }
+                    added = true;
+                    tracing::info!("Added to blacklist: {}", add);
                 }
+
                 if let Some(remove) = params.and_then(|p| p.get("remove")).and_then(|v| v.as_str()) {
-                    // In a real implementation, this would remove from the blacklist
-                    tracing::info!("Would remove from blacklist: {}", remove);
+                    // Determine if it's a peer or account
+                    if remove.contains(':') {
+                        removed = blacklist.remove_peer(remove);
+                    } else {
+                        removed = blacklist.remove_account(remove);
+                    }
+                    if removed {
+                        tracing::info!("Removed from blacklist: {}", remove);
+                    }
                 }
+
+                // Get current blacklist entries
+                let peers: Vec<serde_json::Value> = blacklist
+                    .get_peers()
+                    .iter()
+                    .map(|p| serde_json::json!({"type": "peer", "address": p}))
+                    .collect();
+                let accounts: Vec<serde_json::Value> = blacklist
+                    .get_accounts()
+                    .iter()
+                    .map(|a| serde_json::json!({"type": "account", "account": a}))
+                    .collect();
+
+                let mut blacklist_list = peers;
+                blacklist_list.extend(accounts);
 
                 Ok(serde_json::json!({
                     "blacklist": blacklist_list,
-                    "count": 0,
+                    "count": blacklist.count(),
+                    "added": added,
+                    "removed": removed,
                     "status": "success",
                 }))
             }
