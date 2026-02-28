@@ -142,6 +142,10 @@ pub struct Application {
     feature_store: FeatureStore,
     /// Network command sender for peer connections
     network_command_tx: Option<tokio::sync::mpsc::Sender<network::NetworkCommand>>,
+    /// Shard store for managing historical ledger shards
+    shard_store: storage::ShardStore,
+    /// Shard crawler for discovering shards from peers
+    shard_crawler: storage::ShardCrawler,
 }
 
 /// Log manager for handling log file rotation
@@ -728,6 +732,13 @@ impl Application {
             warn!("Failed to load feature flags from file: {}", e);
         }
 
+        // Initialize shard store
+        let shard_dir = format!("{}/shards", config.data_dir);
+        let shard_store = storage::ShardStore::new(&shard_dir);
+
+        // Initialize shard crawler
+        let shard_crawler = storage::ShardCrawler::new();
+
         info!("Application initialized with node_id: {:?}", node_id);
 
         Ok(Self {
@@ -755,6 +766,8 @@ impl Application {
             log_manager,
             feature_store,
             network_command_tx: None,
+            shard_store,
+            shard_crawler,
         })
     }
 
@@ -866,6 +879,21 @@ impl Application {
     pub fn save_features(&self) -> anyhow::Result<()> {
         let feature_file = format!("{}/features.json", self.config.data_dir);
         self.feature_store.save_to_file(&feature_file)
+    }
+
+    /// Get the shard store
+    pub fn get_shard_store(&self) -> &storage::ShardStore {
+        &self.shard_store
+    }
+
+    /// Get the shard crawler
+    pub fn get_shard_crawler(&self) -> &storage::ShardCrawler {
+        &self.shard_crawler
+    }
+
+    /// Get the shard crawler (mutable)
+    pub fn get_shard_crawler_mut(&mut self) -> &mut storage::ShardCrawler {
+        &mut self.shard_crawler
     }
 
     /// Index a transaction for account history

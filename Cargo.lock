@@ -2163,6 +2163,8 @@ dependencies = [
  "crypto",
  "primitives",
  "rocksdb",
+ "serde",
+ "serde_json",
  "serialization",
  "shamap",
  "tempfile",
