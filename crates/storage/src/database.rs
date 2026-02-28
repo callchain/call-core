@@ -91,6 +91,12 @@ impl Database {
     pub fn store_transaction_node(&self, hash: UInt256, data: Vec<u8>) {
         self.store_node_data(NodeObjectType::TransactionNode, hash, data);
     }
+
+    /// Iterate over all nodes of a specific type
+    pub fn iterate_nodes(&self, obj_type: NodeObjectType) -> Vec<NodeObject> {
+        let backend = self.backend.lock().unwrap();
+        backend.iterate(obj_type).collect()
+    }
 }
 
 impl Clone for Database {

@@ -33,6 +33,12 @@ pub trait LedgerView {
 
     /// Get ledger info
     fn get_ledger_info(&self) -> LedgerInfo;
+
+    /// Get a SignerList
+    fn get_signer_list(&self, account: &AccountID) -> Option<crate::ledger_entries::SignerList>;
+
+    /// Set a SignerList
+    fn set_signer_list(&mut self, signer_list: &crate::ledger_entries::SignerList);
 }
 
 /// Simple ledger view implementation for testing
@@ -80,6 +86,12 @@ impl LedgerView for BasicLedgerView {
     fn get_ledger_info(&self) -> LedgerInfo {
         LedgerInfo::default()
     }
+
+    fn get_signer_list(&self, _account: &AccountID) -> Option<crate::ledger_entries::SignerList> {
+        None
+    }
+
+    fn set_signer_list(&mut self, _signer_list: &crate::ledger_entries::SignerList) {}
 }
 
 use crate::ledger_entries::LedgerState;
@@ -133,5 +145,13 @@ impl<'a> LedgerView for MutableLedgerView<'a> {
 
     fn get_ledger_info(&self) -> LedgerInfo {
         self.ledger_info.clone()
+    }
+
+    fn get_signer_list(&self, account: &AccountID) -> Option<crate::ledger_entries::SignerList> {
+        self.state.get_signer_list(account)
+    }
+
+    fn set_signer_list(&mut self, signer_list: &crate::ledger_entries::SignerList) {
+        self.state.set_signer_list(signer_list);
     }
 }

@@ -274,7 +274,7 @@ impl TransactionEngine {
         TER::tesSUCCESS
     }
 
-    fn preclaim_payment(&self, _ctx: &ApplyContext, tx: &Transaction, account: &AccountRoot) -> TER {
+    fn preclaim_payment(&self, ctx: &ApplyContext, tx: &Transaction, account: &AccountRoot) -> TER {
         let amount = tx.amount.as_ref().unwrap();
 
         // Check sufficient balance for amount + fee
@@ -287,7 +287,31 @@ impl TransactionEngine {
         }
 
         // Check destination exists (unless creating it)
-        // In a real implementation, we'd check if the destination exists
+        let destination = tx.destination.as_ref().unwrap();
+        let dest_exists = ctx.ledger.get_account_root(destination).is_some();
+
+        if !dest_exists {
+            // Destination doesn't exist - need to check if we're creating it
+            // Account creation requires minimum reserve (currently 10 CALL)
+            const ACCOUNT_CREATION_RESERVE: i64 = 10_000_000; // 10 CALL in drops
+
+            if amount.mantissa < ACCOUNT_CREATION_RESERVE {
+                return TER::tecNO_DST_INSUF_CALL;
+            }
+
+            // Also check sender has enough for their own reserve
+            // Owner count would increase if sender doesn't have enough reserve
+            // Default reserve values: 10 CALL base, 2 CALL increment
+            let reserve_base: u64 = 10_000_000; // 10 CALL in drops
+            let reserve_inc: u64 = 2_000_000;   // 2 CALL in drops
+            let sender_reserve_needed = reserve_base
+                + (account.owner_count as u64 * reserve_inc);
+
+            let sender_balance_after = account.balance.mantissa.saturating_sub(amount_val as i64);
+            if (sender_balance_after as u64) < sender_reserve_needed {
+                return TER::tecUNFUNDED_PAYMENT;
+            }
+        }
 
         TER::tesSUCCESS
     }
@@ -617,14 +641,31 @@ impl TransactionEngine {
 
     fn apply_signer_list_set(
         &self,
-        _ctx: &mut ApplyContext,
-        _tx: &Transaction,
+        ctx: &mut ApplyContext,
+        tx: &Transaction,
         account: &mut AccountRoot,
         _result: &mut TxResult,
     ) -> TER {
-        // Update signer list on account
-        // In a full implementation, we'd create/update a SignerList ledger entry
+        use crate::ledger_entries::SignerList;
+
+        // Create or update the SignerList ledger entry
+        let mut signer_list = SignerList::new(account.account, tx.signer_quorum);
+
+        // Add all signers from the transaction
+        for signer_entry in &tx.signers {
+            signer_list.add_signer(signer_entry.clone());
+        }
+
+        // Update previous txn info
+        // Note: Would use actual transaction hash if available in result
+        signer_list.update_previous_txn(UInt256::zero(), ctx.ledger_seq);
+
+        // Store the signer list in the ledger state
+        ctx.ledger.set_signer_list(&signer_list);
+
+        // Update account owner count
         account.owner_count = account.owner_count.saturating_add(1);
+
         TER::tesSUCCESS
     }
 
@@ -823,6 +864,12 @@ mod tests {
         fn get_ledger_info(&self) -> crate::ledger::LedgerInfo {
             crate::ledger::LedgerInfo::default()
         }
+
+        fn get_signer_list(&self, _account: &AccountID) -> Option<crate::ledger_entries::SignerList> {
+            None
+        }
+
+        fn set_signer_list(&mut self, _signer_list: &crate::ledger_entries::SignerList) {}
     }
 
     #[test]
@@ -841,6 +888,11 @@ mod tests {
         let sender_root = AccountRoot::new(sender).with_balance(1_000_000);
         ledger.set_account_root(&sender_root);
 
+        // Create destination account to avoid account creation reserve check
+        let destination = AccountID::new([2u8; 20]);
+        let dest_root = AccountRoot::new(destination).with_balance(1);
+        ledger.set_account_root(&dest_root);
+
         let mut ctx = ApplyContext {
             ledger: &mut ledger,
             rules: ApplyRules::default(),
@@ -851,7 +903,7 @@ mod tests {
         // Create payment transaction
         let mut tx = Transaction::new_payment(
             sender,
-            AccountID::new([2u8; 20]),
+            destination,
             Amount::call(100_000),
         );
         tx.sequence = 1;

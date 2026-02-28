@@ -60,6 +60,9 @@ pub trait Backend: Send + Sync {
     fn set_deleted(&mut self, _previous_ledger: UInt256) {
         // Default: no-op
     }
+
+    /// Iterate over all nodes of a specific type
+    fn iterate(&self, obj_type: NodeObjectType) -> Box<dyn Iterator<Item = NodeObject> + '_>;
 }
 
 /// Column family names for RocksDB
@@ -184,6 +187,29 @@ impl Backend for RocksDBBackend {
 
         let _ = self.db.write(rocks_batch);
     }
+
+    fn iterate(&self, obj_type: NodeObjectType) -> Box<dyn Iterator<Item = NodeObject> + '_> {
+        use rocksdb::IteratorMode;
+
+        // Collect all items into a Vec for now (simpler approach)
+        // A future optimization could use a custom iterator to avoid loading all at once
+        let mut results = Vec::new();
+        if let Ok(cf) = self.cf_for_type(obj_type) {
+            let iter = self.db.iterator_cf(cf, IteratorMode::Start);
+            for item in iter {
+                if let Ok((key, value)) = item {
+                    if key.len() == 32 {
+                        let mut hash_bytes = [0u8; 32];
+                        hash_bytes.copy_from_slice(&key);
+                        let hash = UInt256::new(hash_bytes);
+                        results.push(NodeObject::new(obj_type, hash, value.to_vec()));
+                    }
+                }
+            }
+        }
+
+        Box::new(results.into_iter())
+    }
 }
 
 /// Storage errors
@@ -245,6 +271,20 @@ impl Backend for MemoryBackend {
                 }
             }
         }
+    }
+
+    fn iterate(&self, obj_type: NodeObjectType) -> Box<dyn Iterator<Item = NodeObject> + '_> {
+        Box::new(
+            self.data
+                .iter()
+                .filter_map(move |(hash, (stored_type, data))| {
+                    if *stored_type == obj_type {
+                        Some(NodeObject::new(*stored_type, *hash, data.clone()))
+                    } else {
+                        None
+                    }
+                }),
+        )
     }
 }
 

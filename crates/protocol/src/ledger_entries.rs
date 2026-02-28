@@ -865,6 +865,24 @@ impl LedgerState {
         let _ = nickname;
     }
 
+    pub fn get_signer_list(&self, account: &AccountID) -> Option<SignerList> {
+        // Create a temporary SignerList to compute the ledger index
+        let temp_list = SignerList::new(*account, 0);
+        let index = temp_list.ledger_index();
+
+        self.state_map.get_item(&index).and_then(|item| {
+            Self::deserialize_signer_list(item.data())
+        })
+    }
+
+    pub fn set_signer_list(&mut self, signer_list: &SignerList) {
+        use shamap::SHAMapItem;
+        let index = signer_list.ledger_index();
+        let data = Self::serialize_signer_list(signer_list);
+        let item = SHAMapItem::new(index, data);
+        self.state_map.add_item(index, item);
+    }
+
     // Serialization helpers
     /// Iterate over all entries in the ledger state
     pub fn iter(&self) -> impl Iterator<Item = &shamap::SHAMapItem> {
@@ -1140,6 +1158,51 @@ impl LedgerState {
         })
     }
 
+    fn serialize_signer_list(signer_list: &SignerList) -> Vec<u8> {
+        use serialization::Serializer;
+        let mut ser = Serializer::with_capacity(256);
+        ser.add_account(signer_list.account);
+        ser.add32(signer_list.signer_quorum);
+        // Serialize signers count
+        ser.add32(signer_list.signers.len() as u32);
+        // Serialize each signer
+        for signer in &signer_list.signers {
+            ser.add_account(signer.account);
+            ser.add8(signer.weight);
+        }
+        ser.finish()
+    }
+
+    pub fn deserialize_signer_list(data: &[u8]) -> Option<SignerList> {
+        use serialization::SerialIter;
+        let mut iter = SerialIter::new(data);
+
+        let account = iter.get_account().ok()?;
+        let signer_quorum = iter.get32().ok()?;
+        let signers_count = iter.get32().ok()? as usize;
+
+        let mut signers = Vec::with_capacity(signers_count.min(32)); // Max 32 signers
+
+        for _ in 0..signers_count {
+            if let Ok(signer_account) = iter.get_account() {
+                if let Ok(weight) = iter.get8() {
+                    signers.push(SignerEntry {
+                        account: signer_account,
+                        weight,
+                    });
+                }
+            }
+        }
+
+        Some(SignerList {
+            account,
+            signer_quorum,
+            signers,
+            previous_txn_id: primitives::UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        })
+    }
+
     fn deserialize_invoice(data: &[u8]) -> Option<Invoice> {
         use serialization::SerialIter;
         let mut iter = SerialIter::new(data);
@@ -1200,26 +1263,83 @@ impl LedgerState {
 
     /// Load the ledger state from the database
     /// This loads all account nodes and rebuilds the SHAMap
-    /// Note: This requires a database backend that supports iteration
     pub fn load_from_database(
         &mut self,
-        _database: &storage::Database,
-        _ledger_hash: primitives::UInt256,
+        database: &storage::Database,
+        ledger_hash: primitives::UInt256,
     ) -> bool {
-        use tracing::warn;
+        use tracing::{debug, info, warn};
+        use storage::NodeObjectType;
 
-        warn!("Ledger state loading from database is not fully implemented - requires database iteration support");
+        // First, verify the ledger exists
+        let _ledger_obj = match database.fetch_ledger(&ledger_hash) {
+            Some(obj) => obj,
+            None => {
+                warn!("Ledger {} not found in database", ledger_hash);
+                return false;
+            }
+        };
 
-        // For a full implementation:
-        // 1. Load the ledger header to get the state tree root hash
-        // 2. Fetch the root node from database
-        // 3. Recursively load all child nodes (inner and leaf)
-        // 4. Reconstruct the SHAMap
-        //
-        // The current limitation is that the database backend
-        // doesn't support iterating over all nodes.
+        info!("Loading ledger state for ledger {}", ledger_hash);
 
-        false
+        // Clear current state
+        self.state_map.clear();
+
+        // Load all account nodes from the database
+        let account_nodes = database.iterate_nodes(NodeObjectType::AccountNode);
+        let mut loaded_count = 0;
+
+        for node in account_nodes {
+            // Try to deserialize as AccountRoot
+            if let Some(account) = Self::deserialize_account_root_from_data(node.get_data()) {
+                self.set_account_root(&account);
+                loaded_count += 1;
+            } else {
+                // Try to deserialize as other ledger entry types
+                if let Some(call_state) = Self::deserialize_call_state(node.get_data()) {
+                    self.set_call_state(&call_state);
+                    loaded_count += 1;
+                } else if let Some(offer) = Self::deserialize_offer(node.get_data()) {
+                    self.set_offer(&offer);
+                    loaded_count += 1;
+                } else if let Some(signer_list) = Self::deserialize_signer_list(node.get_data()) {
+                    self.set_signer_list(&signer_list);
+                    loaded_count += 1;
+                } else if let Some(nickname) = Self::deserialize_nickname(node.get_data()) {
+                    self.set_nickname(&nickname);
+                    loaded_count += 1;
+                } else {
+                    debug!("Unknown ledger entry type for hash: {:?}", node.get_hash());
+                }
+            }
+        }
+
+        info!(
+            "Loaded {} ledger entries from database for ledger {}",
+            loaded_count, ledger_hash
+        );
+
+        loaded_count > 0
+    }
+
+    /// Deserialize AccountRoot from raw data (helper for loading)
+    fn deserialize_account_root_from_data(data: &[u8]) -> Option<AccountRoot> {
+        // First try to extract account from the data
+        if data.len() < 20 {
+            return None;
+        }
+
+        // Convert bytes to AccountID
+        let mut account_bytes = [0u8; 20];
+        account_bytes.copy_from_slice(&data[0..20]);
+        let account_id = AccountID::new(account_bytes);
+
+        // Try full deserialization first
+        if let Some(account) = Self::deserialize_account_root(&account_id, data) {
+            return Some(account);
+        }
+
+        None
     }
 
     /// Load a specific account from the database into the state map

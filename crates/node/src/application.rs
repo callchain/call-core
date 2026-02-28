@@ -134,6 +134,8 @@ pub struct Application {
     log_manager: LogManager,
     /// Feature store for protocol feature flags
     feature_store: FeatureStore,
+    /// Network command sender for peer connections
+    network_command_tx: Option<tokio::sync::mpsc::Sender<network::NetworkCommand>>,
 }
 
 /// Log manager for handling log file rotation
@@ -745,6 +747,7 @@ impl Application {
             wallet_store,
             log_manager,
             feature_store,
+            network_command_tx: None,
         })
     }
 
@@ -1285,23 +1288,38 @@ impl Application {
         sha512_half(serializer.as_slice())
     }
 
-    /// Process network messages
+    /// Process network messages and manage peer connections
     async fn process_network(&mut self) -> anyhow::Result<()> {
-        // Get pending messages from overlay and process them
-        // In a real implementation, this would receive messages from peer connections
-
         // Clean up timed out peers periodically
         self.overlay.cleanup_timed_out(std::time::Duration::from_secs(300));
 
         // Check if we need more peers and try to connect
         if self.overlay.needs_more_peers() {
             for peer_addr in &self.config.peers {
-                debug!("Attempting to connect to bootstrap peer: {}", peer_addr);
-                // In a full implementation, this would initiate TCP connections
+                debug!("Initiating connection to bootstrap peer: {}", peer_addr);
+                // Send connect command to network manager
+                if let Some(ref network_tx) = self.network_command_tx {
+                    if let Err(e) = network_tx
+                        .send(network::NetworkCommand::Connect(*peer_addr))
+                        .await
+                    {
+                        warn!("Failed to send connect command: {}", e);
+                    }
+                } else {
+                    debug!("Network command channel not available");
+                }
             }
         }
 
         Ok(())
+    }
+
+    /// Set the network command sender
+    pub fn set_network_command_sender(
+        &mut self,
+        sender: tokio::sync::mpsc::Sender<network::NetworkCommand>,
+    ) {
+        self.network_command_tx = Some(sender);
     }
 
     /// Start the RPC server
@@ -1456,7 +1474,7 @@ impl Application {
         use network::{Message, MessageType};
 
         // Create transaction message
-        let _message = Message::new(MessageType::Transaction, tx_blob.to_vec());
+        let message = Message::new(MessageType::Transaction, tx_blob.to_vec());
 
         // Broadcast to all active peers
         let peer_count = self.overlay.active_peer_count();
@@ -1467,12 +1485,8 @@ impl Application {
 
         debug!("Broadcasting transaction to {} peers", peer_count);
 
-        // Send to each peer
-        for peer_addr in self.overlay.get_active_peer_addresses() {
-            debug!("Sending transaction to peer: {}", peer_addr);
-            // In a full implementation, this would queue the message for sending
-            // through the peer's connection
-        }
+        // Broadcast via the overlay network
+        self.overlay.broadcast(message);
 
         Ok(())
     }

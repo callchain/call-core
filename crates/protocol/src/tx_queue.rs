@@ -446,7 +446,17 @@ impl OpenLedger {
         // In a real implementation, we'd check against current ledger state
 
         // Check transaction isn't expired
-        // In a real implementation, we'd check expiration
+        if let Some(expiration) = tx.expiration {
+            // Note: Would check against current ledger time if available
+            // For now, use system time
+            let current_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as u32;
+            if expiration < current_time {
+                return Err(TER::terNO_ACCOUNT); // Transaction expired
+            }
+        }
 
         Ok(())
     }
@@ -540,6 +550,12 @@ mod tests {
         fn get_ledger_info(&self) -> crate::ledger::LedgerInfo {
             crate::ledger::LedgerInfo::default()
         }
+
+        fn get_signer_list(&self, _account: &AccountID) -> Option<crate::ledger_entries::SignerList> {
+            None
+        }
+
+        fn set_signer_list(&mut self, _signer_list: &crate::ledger_entries::SignerList) {}
     }
 
     #[test]
