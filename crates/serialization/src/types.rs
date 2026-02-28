@@ -95,6 +95,7 @@ pub mod sf {
         LEDGER_ENTRY_TYPE = (SerializedTypeID::UInt16, 1, true, true),
         TRANSACTION_TYPE = (SerializedTypeID::UInt16, 2, true, true),
         SIGNER_WEIGHT = (SerializedTypeID::UInt16, 3, true, true),
+        TICK_SIZE = (SerializedTypeID::UInt8, 16, true, true),
         VERSION = (SerializedTypeID::UInt16, 16, true, true),
         FEE = (SerializedTypeID::Amount, 8, true, true),
         SEND_MAX = (SerializedTypeID::Amount, 9, true, true),
@@ -146,6 +147,7 @@ pub mod sf {
         UNAUTHORIZE = (SerializedTypeID::Account, 10, true, true),
         DESTINATION = (SerializedTypeID::Account, 3, true, true),
         ISSUER = (SerializedTypeID::Account, 4, true, true),
+        OWNER = (SerializedTypeID::Account, 5, true, true),
         TARGET = (SerializedTypeID::Account, 7, true, true),
         ACCOUNT = (SerializedTypeID::Account, 1, true, true),
         OBJECT_END_MARKER = (SerializedTypeID::Object, 1, true, true),
@@ -187,6 +189,7 @@ pub mod sf {
         CLOSE_RESOLUTION = (SerializedTypeID::UInt8, 1, true, true),
         METHOD = (SerializedTypeID::UInt8, 2, true, true),
         TRANSACTION_RESULT = (SerializedTypeID::UInt8, 3, true, true),
+        CODE_GARAGE = (SerializedTypeID::UInt32, 47, true, true),
         TAKER_PAYS_CURRENCY = (SerializedTypeID::Hash160, 1, true, true),
         TAKER_PAYS_ISSUER = (SerializedTypeID::Hash160, 2, true, true),
         TAKER_GETS_CURRENCY = (SerializedTypeID::Hash160, 3, true, true),
@@ -198,6 +201,7 @@ pub mod sf {
         FEATURES = (SerializedTypeID::Vector256, 3, true, true),
         TRANSACTIONS = (SerializedTypeID::Vector256, 4, true, true),
         AMENDMENTS = (SerializedTypeID::Vector256, 5, true, true),
+        CURRENCY = (SerializedTypeID::VL, 1, true, true),
         SIGNER_LIST_ID = (SerializedTypeID::UInt32, 41, true, true),
         SET_FLAG = (SerializedTypeID::UInt32, 33, true, true),
         CLEAR_FLAG = (SerializedTypeID::UInt32, 34, true, true),
@@ -426,6 +430,27 @@ impl STObject {
     pub fn get_uint64(&self, field: SField) -> Option<u64> {
         match self.fields.get(&field.field_code) {
             Some(STValue::UInt64(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn get_uint8(&self, field: SField) -> Option<u8> {
+        match self.fields.get(&field.field_code) {
+            Some(STValue::UInt8(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn get_uint16(&self, field: SField) -> Option<u16> {
+        match self.fields.get(&field.field_code) {
+            Some(STValue::UInt16(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn get_hash128(&self, field: SField) -> Option<UInt128> {
+        match self.fields.get(&field.field_code) {
+            Some(STValue::Hash128(v)) => Some(*v),
             _ => None,
         }
     }

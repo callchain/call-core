@@ -1000,7 +1000,17 @@ impl RpcHandler for AppRpcHandler {
                     let currency_hex = hex::encode(cs.currency.as_bytes());
                     let holder = cs.account;
 
-                    // Calculate the gateway's obligation (negative of holder's balance)
+                    // Calculate the balance as a signed integer
+                    // For gateway obligations, we report negative of holder's balance
+                    let balance_mantissa = cs.balance.mantissa as i64;
+                    let gateway_obligation = -balance_mantissa; // Gateway owes the negative of holder's balance
+
+                    // Format the obligation with proper sign
+                    let obligation_str = if gateway_obligation < 0 {
+                        format!("-{}", gateway_obligation.abs())
+                    } else {
+                        gateway_obligation.to_string()
+                    };
                     let balance_str = cs.balance.mantissa.to_string();
 
                     // Check if this is a hotwallet
@@ -1011,12 +1021,11 @@ impl RpcHandler for AppRpcHandler {
                             .or_insert_with(std::collections::HashMap::new)
                             .insert(currency_hex.clone(), balance_str.clone());
                     } else {
-                        // Add to obligations (what the gateway owes)
-                        // In a full implementation, this would handle negative balances correctly
-                        obligations.insert(currency_hex.clone(), balance_str.clone());
+                        // Add to obligations (what the gateway owes) - negative balance
+                        obligations.insert(currency_hex.clone(), obligation_str);
                     }
 
-                    // Sum up total balances per currency
+                    // Sum up total balances per currency (raw balance values)
                     balances.entry(currency_hex)
                         .and_modify(|e| {
                             // Simple string concat for now - would need proper decimal math
@@ -2384,32 +2393,17 @@ impl RpcHandler for AppRpcHandler {
                 let app = self.app.read().await;
                 let ledger_state = app.get_ledger_state();
 
-                // Search for nickname in ledger state
+                // Search for nickname in ledger state using the nickname index
                 let mut accounts: Vec<serde_json::Value> = Vec::new();
 
-                // Try to get nickname entry from ledger state
-                if let Some(nick_entry) = ledger_state.get_nickname(nick.as_bytes()) {
+                // Use the nickname index for efficient search
+                let nick_entries = ledger_state.search_nicknames(nick, limit);
+                for nick_entry in nick_entries {
                     accounts.push(serde_json::json!({
                         "account": hex::encode(nick_entry.account.as_bytes()),
                         "nickname": String::from_utf8_lossy(&nick_entry.nickname).to_string(),
                         "min_offer": nick_entry.min_offer.as_ref().map(|a| a.mantissa.to_string()),
                     }));
-                }
-
-                // Also search for partial matches (simplified)
-                // In a full implementation, this would use a proper index
-                let nick_lower = nick.to_lowercase();
-                for item in ledger_state.iter().take(limit * 10) {
-                    if let Some(nick_entry) = ledger_state.get_nickname(item.data()) {
-                        let entry_nick = String::from_utf8_lossy(&nick_entry.nickname).to_lowercase();
-                        if entry_nick.contains(&nick_lower) && accounts.len() < limit {
-                            accounts.push(serde_json::json!({
-                                "account": hex::encode(nick_entry.account.as_bytes()),
-                                "nickname": String::from_utf8_lossy(&nick_entry.nickname).to_string(),
-                                "min_offer": nick_entry.min_offer.as_ref().map(|a| a.mantissa.to_string()),
-                            }));
-                        }
-                    }
                 }
 
                 Ok(serde_json::json!({

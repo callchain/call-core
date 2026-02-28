@@ -935,10 +935,7 @@ impl Application {
     /// Load ledger state from database
     fn load_ledger_state(&mut self) -> bool {
         // Try to load the ledger state from the database
-        // This is a placeholder - full implementation would:
-        // 1. Load the last ledger hash from node_state.json
-        // 2. Load all ledger entries from the database
-        // 3. Reconstruct the SHAMap from stored nodes
+        // This loads the last ledger hash and reconstructs the SHAMap from stored nodes
 
         if let Some((ledger_hash, ledger_seq)) = self.load_node_state() {
             info!("Attempting to load ledger {} from database", ledger_seq);
@@ -1562,8 +1559,24 @@ impl Application {
 
         info!("Persisted node state");
 
-        // 3. Persist last ledger info (placeholder - would store actual ledger)
-        // In a full implementation, this would serialize and store the current ledger
+        // 3. Persist current ledger info
+        let ledger_info = serde_json::json!({
+            "ledger_hash": hex::encode(self.current_ledger_hash.as_bytes()),
+            "ledger_seq": self.current_ledger_seq,
+            "persist_time": chrono::Utc::now().to_rfc3339(),
+        });
+
+        let ledger_data = serde_json::to_vec(&ledger_info)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize ledger info: {}", e))?;
+
+        let ledger_hash = crypto::sha512_half(&ledger_data);
+        let ledger_object = NodeObject::new(NodeObjectType::Ledger, ledger_hash, ledger_data);
+        self.database.store_node(ledger_object);
+
+        // 4. Persist ledger state (SHAMap contents)
+        self.ledger_state.persist_to_database(&self.database);
+
+        info!("Persisted ledger {} to database", self.current_ledger_seq);
 
         Ok(())
     }

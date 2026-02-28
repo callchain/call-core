@@ -4,7 +4,8 @@
 //! Each entry type corresponds to a specific type of object stored in the SHAMap.
 
 use primitives::{AccountID, Currency, UInt256};
-use serialization::{Amount, STObject};
+use serialization::{Amount, STObject, STValue};
+use serialization::types::sf;
 use crate::SignerEntry;
 
 /// Ledger entry types
@@ -168,14 +169,81 @@ impl LedgerEntry for AccountRoot {
     }
 
     fn to_stobject(&self) -> STObject {
-        let obj = STObject::new();
-        // In a real implementation, serialize all fields
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::AccountRoot.as_u16()));
+        obj.insert(sf::ACCOUNT, STValue::Account(self.account));
+        obj.insert(sf::BALANCE, STValue::Amount(self.balance));
+        obj.insert(sf::SEQUENCE, STValue::UInt32(self.sequence));
+        obj.insert(sf::OWNER_COUNT, STValue::UInt32(self.owner_count));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        // Optional fields - only include if present
+        if let Some(ref account_txn_id) = self.account_txn_id {
+            obj.insert(sf::ACCOUNT_TXN_ID, STValue::Hash256(*account_txn_id));
+        }
+        if let Some(ref wallet_locator) = self.wallet_locator {
+            obj.insert(sf::WALLET_LOCATOR, STValue::Hash256(*wallet_locator));
+        }
+        if let Some(wallet_size) = self.wallet_size {
+            obj.insert(sf::WALLET_SIZE, STValue::UInt32(wallet_size));
+        }
+        if let Some(ref message_key) = self.message_key {
+            obj.insert(sf::MESSAGE_KEY, STValue::VL(message_key.clone()));
+        }
+        if let Some(ref domain) = self.domain {
+            obj.insert(sf::DOMAIN, STValue::VL(domain.clone()));
+        }
+        if let Some(transfer_rate) = self.transfer_rate {
+            obj.insert(sf::TRANSFER_RATE, STValue::UInt32(transfer_rate));
+        }
+        if let Some(ref regular_key) = self.regular_key {
+            obj.insert(sf::REGULAR_KEY, STValue::Account(*regular_key));
+        }
+
         obj
     }
 
-    fn from_stobject(_obj: &STObject) -> Option<Self> {
-        // In a real implementation, deserialize all fields
-        None
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let account = obj.get_account(sf::ACCOUNT)?;
+        let balance = obj.get_amount(sf::BALANCE)?;
+        let sequence = obj.get_uint32(sf::SEQUENCE)?;
+        let owner_count = obj.get_uint32(sf::OWNER_COUNT)?;
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        // Optional fields
+        let account_txn_id = obj.get_hash256(sf::ACCOUNT_TXN_ID);
+        let wallet_locator = obj.get_hash256(sf::WALLET_LOCATOR);
+        let wallet_size = obj.get_uint32(sf::WALLET_SIZE);
+        let message_key = obj.get_vl(sf::MESSAGE_KEY).map(|v| v.to_vec());
+        let domain = obj.get_vl(sf::DOMAIN).map(|v| v.to_vec());
+        let transfer_rate = obj.get_uint32(sf::TRANSFER_RATE);
+        let regular_key = obj.get_account(sf::REGULAR_KEY);
+
+        Some(Self {
+            account,
+            balance,
+            sequence,
+            owner_count,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+            account_txn_id,
+            wallet_locator: wallet_locator.map(|_| UInt256::zero()),
+            wallet_size,
+            message_key,
+            domain,
+            transfer_rate,
+            code_garage: None,
+            email_hash: None,
+            regular_key,
+            tick_size: None,
+        })
     }
 }
 
@@ -268,6 +336,108 @@ impl CallState {
     }
 }
 
+impl LedgerEntry for CallState {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::CallState
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::CallState.as_u16()));
+        obj.insert(sf::ACCOUNT, STValue::Account(self.account));
+        obj.insert(sf::ISSUER, STValue::Account(self.issuer));
+        obj.insert(sf::CURRENCY, STValue::VL(self.currency.as_bytes().to_vec()));
+        obj.insert(sf::BALANCE, STValue::Amount(self.balance));
+        obj.insert(sf::LOW_LIMIT, STValue::Amount(self.limit));
+        obj.insert(sf::HIGH_LIMIT, STValue::Amount(self.limit_peer));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        // Optional fields
+        if let Some(quality_in) = self.quality_in {
+            obj.insert(sf::QUALITY_IN, STValue::UInt32(quality_in));
+        }
+        if let Some(quality_out) = self.quality_out {
+            obj.insert(sf::QUALITY_OUT, STValue::UInt32(quality_out));
+        }
+        if let Some(low_node) = self.low_node {
+            obj.insert(sf::LOW_NODE, STValue::Hash256(low_node));
+        }
+        if let Some(high_node) = self.high_node {
+            obj.insert(sf::HIGH_NODE, STValue::Hash256(high_node));
+        }
+        if let Some(low_quality_in) = self.low_quality_in {
+            obj.insert(sf::LOW_QUALITY_IN, STValue::UInt32(low_quality_in));
+        }
+        if let Some(high_quality_in) = self.high_quality_in {
+            obj.insert(sf::HIGH_QUALITY_IN, STValue::UInt32(high_quality_in));
+        }
+        if let Some(low_quality_out) = self.low_quality_out {
+            obj.insert(sf::LOW_QUALITY_OUT, STValue::UInt32(low_quality_out));
+        }
+        if let Some(high_quality_out) = self.high_quality_out {
+            obj.insert(sf::HIGH_QUALITY_OUT, STValue::UInt32(high_quality_out));
+        }
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let account = obj.get_account(sf::ACCOUNT)?;
+        let issuer = obj.get_account(sf::ISSUER)?;
+        let currency_bytes = obj.get_vl(sf::CURRENCY)?;
+        let mut currency = Currency::CALL;
+        if currency_bytes.len() == 20 {
+            let mut currency_bytes_arr = [0u8; 20];
+            currency_bytes_arr.copy_from_slice(currency_bytes);
+            currency = Currency::new(currency_bytes_arr);
+        }
+        let balance = obj.get_amount(sf::BALANCE)?;
+        let limit = obj.get_amount(sf::LOW_LIMIT)?;
+        let limit_peer = obj.get_amount(sf::HIGH_LIMIT)?;
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        // Optional fields
+        let quality_in = obj.get_uint32(sf::QUALITY_IN);
+        let quality_out = obj.get_uint32(sf::QUALITY_OUT);
+        let low_node = obj.get_hash256(sf::LOW_NODE);
+        let high_node = obj.get_hash256(sf::HIGH_NODE);
+        let low_quality_in = obj.get_uint32(sf::LOW_QUALITY_IN);
+        let high_quality_in = obj.get_uint32(sf::HIGH_QUALITY_IN);
+        let low_quality_out = obj.get_uint32(sf::LOW_QUALITY_OUT);
+        let high_quality_out = obj.get_uint32(sf::HIGH_QUALITY_OUT);
+
+        Some(Self {
+            account,
+            issuer,
+            currency,
+            balance,
+            limit,
+            limit_peer,
+            quality_in,
+            quality_out,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+            low_node,
+            high_node,
+            low_quality_in,
+            high_quality_in,
+            low_quality_out,
+            high_quality_out,
+        })
+    }
+}
+
 /// Offer entry - represents a DEX offer in the ledger
 #[derive(Debug, Clone)]
 pub struct OfferEntry {
@@ -329,6 +499,70 @@ impl OfferEntry {
     }
 }
 
+impl LedgerEntry for OfferEntry {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::Offer
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::Offer.as_u16()));
+        obj.insert(sf::ACCOUNT, STValue::Account(self.account));
+        obj.insert(sf::SEQUENCE, STValue::UInt32(self.sequence));
+        obj.insert(sf::TAKER_PAYS, STValue::Amount(self.taker_pays));
+        obj.insert(sf::TAKER_GETS, STValue::Amount(self.taker_gets));
+        obj.insert(sf::BOOK_DIRECTORY, STValue::Hash256(self.book_directory));
+        obj.insert(sf::BOOK_NODE, STValue::Hash256(self.book_node));
+        obj.insert(sf::OWNER_NODE, STValue::Hash256(self.owner_node));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        // Optional fields
+        if let Some(expiration) = self.expiration {
+            obj.insert(sf::EXPIRATION, STValue::UInt32(expiration));
+        }
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let account = obj.get_account(sf::ACCOUNT)?;
+        let sequence = obj.get_uint32(sf::SEQUENCE)?;
+        let taker_pays = obj.get_amount(sf::TAKER_PAYS)?;
+        let taker_gets = obj.get_amount(sf::TAKER_GETS)?;
+        let book_directory = obj.get_hash256(sf::BOOK_DIRECTORY)?;
+        let book_node = obj.get_hash256(sf::BOOK_NODE).unwrap_or(UInt256::zero());
+        let owner_node = obj.get_hash256(sf::OWNER_NODE).unwrap_or(UInt256::zero());
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        // Optional fields
+        let expiration = obj.get_uint32(sf::EXPIRATION);
+
+        Some(Self {
+            account,
+            sequence,
+            taker_pays,
+            taker_gets,
+            book_directory,
+            book_node,
+            owner_node,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+            expiration,
+        })
+    }
+}
+
 /// DirectoryNode entry - for indexing offers and other entries
 #[derive(Debug, Clone)]
 pub struct DirectoryNode {
@@ -376,6 +610,99 @@ impl DirectoryNode {
     pub fn is_empty(&self) -> bool {
         self.indexes.is_empty()
     }
+
+    pub fn ledger_index(&self) -> UInt256 {
+        // Directory index is the root_index
+        self.root_index
+    }
+}
+
+impl LedgerEntry for DirectoryNode {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::DirectoryNode
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::DirectoryNode.as_u16()));
+        obj.insert(sf::ROOT_INDEX, STValue::Hash256(self.root_index));
+        obj.insert(sf::INDEXES, STValue::Vector256(self.indexes.clone()));
+
+        // Optional fields
+        if let Some(ref owner) = self.owner {
+            obj.insert(sf::OWNER, STValue::Account(*owner));
+        }
+        if let Some(ref taker_pays_currency) = self.taker_pays_currency {
+            obj.insert(sf::TAKER_PAYS_CURRENCY, STValue::VL(taker_pays_currency.as_bytes().to_vec()));
+        }
+        if let Some(ref taker_pays_issuer) = self.taker_pays_issuer {
+            obj.insert(sf::TAKER_PAYS_ISSUER, STValue::Account(*taker_pays_issuer));
+        }
+        if let Some(ref taker_gets_currency) = self.taker_gets_currency {
+            obj.insert(sf::TAKER_GETS_CURRENCY, STValue::VL(taker_gets_currency.as_bytes().to_vec()));
+        }
+        if let Some(ref taker_gets_issuer) = self.taker_gets_issuer {
+            obj.insert(sf::TAKER_GETS_ISSUER, STValue::Account(*taker_gets_issuer));
+        }
+        if let Some(index_next) = self.index_next {
+            obj.insert(sf::INDEX_NEXT, STValue::UInt64(index_next));
+        }
+        if let Some(index_previous) = self.index_previous {
+            obj.insert(sf::INDEX_PREVIOUS, STValue::UInt64(index_previous));
+        }
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let root_index = obj.get_hash256(sf::ROOT_INDEX)?;
+        let indexes = match obj.get(sf::INDEXES) {
+            Some(STValue::Vector256(v)) => v.clone(),
+            _ => Vec::new(),
+        };
+
+        // Optional fields
+        let owner = obj.get_account(sf::OWNER);
+        let taker_pays_currency = obj.get_vl(sf::TAKER_PAYS_CURRENCY).map(|v| {
+            let mut bytes = [0u8; 20];
+            if v.len() == 20 {
+                bytes.copy_from_slice(v);
+            }
+            Currency::new(bytes)
+        });
+        let taker_pays_issuer = obj.get_account(sf::TAKER_PAYS_ISSUER);
+        let taker_gets_currency = obj.get_vl(sf::TAKER_GETS_CURRENCY).map(|v| {
+            let mut bytes = [0u8; 20];
+            if v.len() == 20 {
+                bytes.copy_from_slice(v);
+            }
+            Currency::new(bytes)
+        });
+        let taker_gets_issuer = obj.get_account(sf::TAKER_GETS_ISSUER);
+        let index_next = obj.get_uint64(sf::INDEX_NEXT);
+        let index_previous = obj.get_uint64(sf::INDEX_PREVIOUS);
+
+        Some(Self {
+            owner,
+            taker_pays_currency,
+            taker_pays_issuer,
+            taker_gets_currency,
+            taker_gets_issuer,
+            indexes,
+            root_index,
+            index_next,
+            index_previous,
+        })
+    }
 }
 
 /// Nickname entry - maps a nickname to an account
@@ -412,6 +739,55 @@ impl NicknameEntry {
     pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
         self.previous_txn_id = txn_id;
         self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+impl LedgerEntry for NicknameEntry {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::Nickname
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::Nickname.as_u16()));
+        obj.insert(sf::NICKNAME, STValue::VL(self.nickname.clone()));
+        obj.insert(sf::ACCOUNT, STValue::Account(self.account));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        // Optional fields
+        if let Some(ref min_offer) = self.min_offer {
+            obj.insert(sf::MINIMUM_OFFER, STValue::Amount(*min_offer));
+        }
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let nickname = obj.get_vl(sf::NICKNAME)?.to_vec();
+        let account = obj.get_account(sf::ACCOUNT)?;
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        // Optional fields
+        let min_offer = obj.get_amount(sf::MINIMUM_OFFER);
+
+        Some(Self {
+            nickname,
+            account,
+            min_offer,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+        })
     }
 }
 
@@ -463,6 +839,73 @@ impl SignerList {
     }
 }
 
+impl LedgerEntry for SignerList {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::SignerList
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::SignerList.as_u16()));
+        obj.insert(sf::ACCOUNT, STValue::Account(self.account));
+        obj.insert(sf::SIGNER_QUORUM, STValue::UInt32(self.signer_quorum));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        // Serialize signers as array
+        let signers_array: Vec<STValue> = self.signers.iter().map(|signer| {
+            let mut signer_obj = STObject::new();
+            signer_obj.insert(sf::ACCOUNT, STValue::Account(signer.account));
+            signer_obj.insert(sf::SIGNER_WEIGHT, STValue::UInt16(signer.weight as u16));
+            STValue::Object(signer_obj)
+        }).collect();
+        obj.insert(sf::SIGNER_ENTRIES, STValue::Array(signers_array));
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let account = obj.get_account(sf::ACCOUNT)?;
+        let signer_quorum = obj.get_uint32(sf::SIGNER_QUORUM)?;
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        // Deserialize signers from array
+        let mut signers = Vec::new();
+        if let Some(signers_values) = obj.get_array(sf::SIGNER_ENTRIES) {
+            for signer_val in signers_values {
+                if let STValue::Object(signer_obj) = signer_val {
+                    if let Some(signer_account) = signer_obj.get_account(sf::ACCOUNT) {
+                        if let Some(weight) = signer_obj.get_uint16(sf::SIGNER_WEIGHT) {
+                            signers.push(SignerEntry {
+                                account: signer_account,
+                                weight: weight as u8,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Some(Self {
+            account,
+            signer_quorum,
+            signers,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+        })
+    }
+}
+
 /// LedgerHashes entry - tracks ledger history
 /// LedgerEntryType: ltLEDGER_HASHES = 'h' (0x68)
 #[derive(Debug, Clone)]
@@ -502,6 +945,49 @@ impl LedgerHashes {
     pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
         self.previous_txn_id = txn_id;
         self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+impl LedgerEntry for LedgerHashes {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::LedgerHashes
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::LedgerHashes.as_u16()));
+        obj.insert(sf::LEDGER_INDEX, STValue::UInt32(self.ledger_index));
+        obj.insert(sf::HASHES, STValue::Vector256(self.hashes.clone()));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let ledger_index = obj.get_uint32(sf::LEDGER_INDEX)?;
+        let hashes = match obj.get(sf::HASHES) {
+            Some(STValue::Vector256(v)) => v.clone(),
+            _ => Vec::new(),
+        };
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        Some(Self {
+            ledger_index,
+            hashes,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+        })
     }
 }
 
@@ -558,6 +1044,62 @@ impl Amendments {
     }
 }
 
+impl LedgerEntry for Amendments {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::Amendments
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::Amendments.as_u16()));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        // Serialize amendments as Vector256 (just the amendment IDs)
+        let amendment_ids: Vec<UInt256> = self.amendments.iter()
+            .filter(|a| a.enabled)
+            .map(|a| a.amendment_id)
+            .collect();
+        obj.insert(sf::AMENDMENTS, STValue::Vector256(amendment_ids));
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        // Deserialize amendments
+        let mut amendments = Vec::new();
+        if let Some(STValue::Vector256(ids)) = obj.get(sf::AMENDMENTS) {
+            for id in ids {
+                amendments.push(AmendmentVote {
+                    amendment_id: *id,
+                    name: String::new(),
+                    enabled: true,
+                    supported: true,
+                    vote_count: 0,
+                });
+            }
+        }
+
+        Some(Self {
+            amendments,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+        })
+    }
+}
+
 /// FeeSettings entry - tracks fee configuration
 /// LedgerEntryType: ltFEE_SETTINGS = 's' (0x73)
 #[derive(Debug, Clone)]
@@ -594,6 +1136,52 @@ impl FeeSettings {
     pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
         self.previous_txn_id = txn_id;
         self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+impl LedgerEntry for FeeSettings {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::FeeSettings
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::FeeSettings.as_u16()));
+        obj.insert(sf::BASE_FEE, STValue::UInt64(self.base_fee));
+        obj.insert(sf::REFERENCE_FEE_UNITS, STValue::UInt32(self.reference_fee_units));
+        obj.insert(sf::RESERVE_BASE, STValue::UInt32(self.reserve_base as u32));
+        obj.insert(sf::RESERVE_INCREMENT, STValue::UInt32(self.reserve_increment as u32));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let base_fee = obj.get_uint64(sf::BASE_FEE)?;
+        let reference_fee_units = obj.get_uint32(sf::REFERENCE_FEE_UNITS).unwrap_or(10);
+        let reserve_base = obj.get_uint32(sf::RESERVE_BASE).map(|v| v as u64).unwrap_or(0);
+        let reserve_increment = obj.get_uint32(sf::RESERVE_INCREMENT).map(|v| v as u64).unwrap_or(0);
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        Some(Self {
+            base_fee,
+            reference_fee_units,
+            reserve_base,
+            reserve_increment,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+        })
     }
 }
 
@@ -660,6 +1248,70 @@ impl IssueRoot {
     }
 }
 
+impl LedgerEntry for IssueRoot {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::IssueRoot
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::IssueRoot.as_u16()));
+        obj.insert(sf::ACCOUNT, STValue::Account(self.issuer));
+        obj.insert(sf::CURRENCY, STValue::VL(self.currency.as_bytes().to_vec()));
+        obj.insert(sf::TOTAL, STValue::Amount(self.total_supply));
+        obj.insert(sf::ISSUED, STValue::Amount(self.issued_amount));
+        obj.insert(sf::FLAGS, STValue::UInt32(self.flags));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        // Optional fields
+        if let Some(transfer_rate) = self.transfer_rate {
+            obj.insert(sf::TRANSFER_RATE, STValue::UInt32(transfer_rate));
+        }
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let issuer = obj.get_account(sf::ACCOUNT)?;
+        let currency_bytes = obj.get_vl(sf::CURRENCY)?;
+        let mut currency = Currency::CALL;
+        if currency_bytes.len() == 20 {
+            let mut currency_bytes_arr = [0u8; 20];
+            currency_bytes_arr.copy_from_slice(currency_bytes);
+            currency = Currency::new(currency_bytes_arr);
+        }
+        let total_supply = obj.get_amount(sf::TOTAL)?;
+        let issued_amount = obj.get_amount(sf::ISSUED).unwrap_or_else(|| Amount::call(0));
+        let flags = obj.get_uint32(sf::FLAGS).unwrap_or(0);
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        // Optional fields
+        let transfer_rate = obj.get_uint32(sf::TRANSFER_RATE);
+
+        Some(Self {
+            issuer,
+            currency,
+            total_supply,
+            issued_amount,
+            transfer_rate,
+            flags,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+        })
+    }
+}
+
 /// Invoice entry - represents a non-fungible token (NFT)
 /// LedgerEntryType: ltINVOICE = 'v' (0x76)
 #[derive(Debug, Clone)]
@@ -711,6 +1363,64 @@ impl Invoice {
     }
 }
 
+impl LedgerEntry for Invoice {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::Invoice
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::Invoice.as_u16()));
+        obj.insert(sf::INVOICE_ID, STValue::Hash256(self.invoice_id));
+        obj.insert(sf::ACCOUNT, STValue::Account(self.issuer));
+        obj.insert(sf::BALANCE_OWNER, STValue::Account(self.owner));
+        obj.insert(sf::AMOUNT, STValue::Amount(self.amount));
+        obj.insert(sf::FLAGS, STValue::UInt32(self.flags));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        // Optional fields
+        if !self.data.is_empty() {
+            obj.insert(sf::INVOICE, STValue::VL(self.data.clone()));
+        }
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let invoice_id = obj.get_hash256(sf::INVOICE_ID)?;
+        let issuer = obj.get_account(sf::ACCOUNT)?;
+        let owner = obj.get_account(sf::BALANCE_OWNER)?;
+        let amount = obj.get_amount(sf::AMOUNT)?;
+        let flags = obj.get_uint32(sf::FLAGS).unwrap_or(0);
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        // Optional fields
+        let data = obj.get_vl(sf::INVOICE).map(|v| v.to_vec()).unwrap_or_default();
+
+        Some(Self {
+            invoice_id,
+            issuer,
+            owner,
+            amount,
+            data,
+            flags,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+        })
+    }
+}
+
 /// FeeRoot entry - tracks accumulated fees
 /// LedgerEntryType: ltFeeRoot = 'F' (0x46)
 #[derive(Debug, Clone)]
@@ -750,10 +1460,52 @@ impl FeeRoot {
     }
 }
 
+impl LedgerEntry for FeeRoot {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::FeeRoot
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+
+        let mut obj = STObject::new();
+
+        // Required fields
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::FeeRoot.as_u16()));
+        obj.insert(sf::BALANCE, STValue::Amount(self.balance));
+        obj.insert(sf::LEDGER_SEQUENCE, STValue::UInt32(self.last_ledger));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+
+        // Required fields
+        let balance = obj.get_amount(sf::BALANCE)?;
+        let last_ledger = obj.get_uint32(sf::LEDGER_SEQUENCE)?;
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
+
+        Some(Self {
+            balance,
+            last_ledger,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+        })
+    }
+}
+
 /// LedgerStateManager - manages all ledger state using SHAMap
 pub struct LedgerState {
     // SHAMap for storing ledger state entries
     state_map: shamap::SHAMap,
+    // Nickname index for efficient search (nickname -> ledger index)
+    nickname_index: std::collections::HashMap<String, UInt256>,
 }
 
 impl std::fmt::Debug for LedgerState {
@@ -769,6 +1521,7 @@ impl LedgerState {
     pub fn new() -> Self {
         Self {
             state_map: shamap::SHAMap::new(shamap::SHAMapType::State),
+            nickname_index: std::collections::HashMap::new(),
         }
     }
 
@@ -858,6 +1611,10 @@ impl LedgerState {
         let data = Self::serialize_nickname(nickname);
         let item = SHAMapItem::new(index, data);
         self.state_map.add_item(index, item);
+
+        // Add to nickname index for efficient search
+        let nick_str = String::from_utf8_lossy(&nickname.nickname).to_lowercase();
+        self.nickname_index.insert(nick_str, index);
     }
 
     pub fn delete_nickname(&mut self, nickname: &[u8]) {
@@ -945,6 +1702,29 @@ impl LedgerState {
                 }
             }
         }
+        results
+    }
+
+    /// Search nicknames by partial match using the nickname index
+    /// Returns up to `limit` matching nickname entries
+    pub fn search_nicknames(&self, search_term: &str, limit: usize) -> Vec<NicknameEntry> {
+        let search_lower = search_term.to_lowercase();
+        let mut results = Vec::new();
+
+        // Use the nickname index for efficient prefix/substring search
+        for (nick_str, index) in &self.nickname_index {
+            if nick_str.contains(&search_lower) {
+                if let Some(item) = self.state_map.get_item(index) {
+                    if let Some(nick_entry) = Self::deserialize_nickname(item.data()) {
+                        results.push(nick_entry);
+                        if results.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         results
     }
 
