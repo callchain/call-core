@@ -782,7 +782,7 @@ impl Default for TransactionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use primitives::AccountID;
+    use primitives::{AccountID, Currency};
     use serialization::Amount;
 
     struct MockLedgerView {

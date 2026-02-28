@@ -156,16 +156,56 @@ impl LedgerSynchronizer {
         self.stats.start_time = Instant::now();
 
         // Queue ledgers for fetching
-        // In a real implementation, we would fetch the ledger hash from:
-        // 1. Peer proposals during consensus
-        // 2. Validated ledger headers from trusted validators
-        // 3. A hardcoded checkpoint for known ledger hashes
+        // Request ledgers by sequence number - the actual hash will be
+        // determined from validator proposals or checkpoint data
         for seq in (self.current_ledger_seq + 1)..=target_ledger {
-            // For now, use zero hash as placeholder
-            // The actual hash will be verified when we receive the ledger
-            // from trusted validators via the validation process
-            let expected_hash = UInt256::zero();
-            self.request_ledger(expected_hash, seq);
+            // Use a placeholder hash derived from the sequence number
+            // This allows us to track pending requests while we wait for
+            // validators to provide the actual hashes
+            let placeholder_hash = self.compute_placeholder_hash(seq);
+            self.request_ledger_by_seq(placeholder_hash, seq);
+        }
+    }
+
+    /// Compute a placeholder hash for a ledger sequence we want to fetch
+    /// This is used internally to track pending requests before we know
+    /// the actual ledger hash from validators
+    fn compute_placeholder_hash(&self, seq: LedgerIndex) -> UInt256 {
+        // Use a hash of the sequence number as placeholder
+        // This ensures each sequence has a unique placeholder
+        let seq_bytes = seq.to_be_bytes();
+        crypto::sha512_half(&seq_bytes)
+    }
+
+    /// Request a ledger by sequence number (before we know the hash)
+    fn request_ledger_by_seq(&mut self, placeholder_hash: UInt256, ledger_index: LedgerIndex) {
+        if self.pending_fetch.contains_key(&placeholder_hash) {
+            return;
+        }
+
+        let request = LedgerFetchRequest {
+            ledger_hash: placeholder_hash,
+            ledger_index,
+            requested_from: Vec::new(),
+            request_time: Instant::now(),
+        };
+
+        self.pending_fetch.insert(placeholder_hash, request);
+
+        debug!("Requesting ledger {} (placeholder hash)", ledger_index);
+
+        // In a real implementation, this would broadcast GetLedger requests to peers
+    }
+
+    /// Update the placeholder hash with the actual hash from validators
+    pub fn update_ledger_hash(&mut self, seq: LedgerIndex, actual_hash: UInt256) {
+        let placeholder = self.compute_placeholder_hash(seq);
+
+        if let Some(mut request) = self.pending_fetch.remove(&placeholder) {
+            // Update with actual hash
+            request.ledger_hash = actual_hash;
+            self.pending_fetch.insert(actual_hash, request);
+            debug!("Updated ledger {} hash to {}", seq, actual_hash.to_hex());
         }
     }
 
@@ -216,7 +256,9 @@ impl LedgerSynchronizer {
             return;
         }
 
-        // Remove from pending fetch
+        // Remove from pending fetch (try both actual hash and placeholder)
+        let placeholder = self.compute_placeholder_hash(ledger.seq);
+        self.pending_fetch.remove(&placeholder);
         self.pending_fetch.remove(&hash);
 
         // Add to pending validation
@@ -681,14 +723,31 @@ mod tests {
 
     #[test]
     fn test_ledger_validation_processing() {
+        use serialization::Serializer;
+        use crypto::sha512_half;
+
         let config = BootstrapConfig {
             validation_threshold: 2,
             ..Default::default()
         };
         let mut sync = LedgerSynchronizer::new(config);
 
-        // Create a pending ledger
-        let info = LedgerInfo::genesis();
+        // Create a pending ledger with properly computed hash
+        let mut info = LedgerInfo::genesis();
+        // Compute the actual hash as verify_ledger_hash expects
+        let mut serializer = Serializer::with_capacity(256);
+        serializer.add32(0x524C3344); // 'RL3D' - ledger master prefix
+        serializer.add32(info.seq);
+        serializer.add32(info.close_time);
+        serializer.add32(info.parent_close_time);
+        serializer.add32(info.close_time_resolution as u32);
+        serializer.add8(info.close_flags);
+        serializer.add64(info.drops);
+        serializer.add256(info.parent_hash);
+        serializer.add256(info.tx_hash);
+        serializer.add256(info.account_hash);
+        info.hash = sha512_half(serializer.as_slice());
+
         let hash = info.hash;
         sync.receive_ledger(info.clone(), vec![], AccountID::new([1u8; 20]));
 

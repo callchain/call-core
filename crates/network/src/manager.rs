@@ -10,6 +10,7 @@ use crate::connection::{connect_peer, Connection, NetworkServer, PING_INTERVAL};
 use crate::message::{HelloMessage, Message};
 use crate::overlay::Overlay;
 use crate::peer::Peer;
+use crypto::PrivateKey;
 use primitives::{LedgerIndex, NodeID, UInt256};
 use std::collections::HashMap;
 use std::io;
@@ -53,6 +54,7 @@ pub enum NetworkEvent {
 pub struct NetworkManager {
     overlay: Arc<RwLock<Overlay>>,
     node_id: NodeID,
+    node_keypair: PrivateKey,
     local_addr: SocketAddr,
     server: Option<NetworkServer>,
     command_rx: mpsc::Receiver<NetworkCommand>,
@@ -79,11 +81,23 @@ enum PeerConnectionState {
 }
 
 impl NetworkManager {
-    /// Create a new network manager
+    /// Create a new network manager with a generated keypair
     pub async fn new(
         bind_addr: SocketAddr,
         node_id: NodeID,
         overlay: Arc<RwLock<Overlay>>,
+    ) -> io::Result<(Self, mpsc::Sender<NetworkCommand>, mpsc::Receiver<NetworkEvent>)> {
+        // Generate a new secp256k1 keypair for the node
+        let node_keypair = PrivateKey::generate_secp256k1();
+        Self::with_keypair(bind_addr, node_id, overlay, node_keypair).await
+    }
+
+    /// Create a new network manager with a specific keypair
+    pub async fn with_keypair(
+        bind_addr: SocketAddr,
+        node_id: NodeID,
+        overlay: Arc<RwLock<Overlay>>,
+        node_keypair: PrivateKey,
     ) -> io::Result<(Self, mpsc::Sender<NetworkCommand>, mpsc::Receiver<NetworkEvent>)> {
         let server = NetworkServer::bind(bind_addr).await?;
         let local_addr = server.local_addr();
@@ -91,9 +105,9 @@ impl NetworkManager {
         let (command_tx, command_rx) = mpsc::channel(100);
         let (event_tx, event_rx) = mpsc::channel(100);
 
-        // Generate a deterministic public key from node_id
-        // In a full implementation, this would be the actual public key from the node's keypair
-        let node_public_key = crypto::sha256(node_id.as_bytes()).to_vec();
+        // Use the actual public key from the node's keypair
+        let public_key = node_keypair.to_public_key();
+        let node_public_key = public_key.as_bytes().to_vec();
 
         let hello_message = HelloMessage {
             protocol_version: crate::connection::PROTOCOL_VERSION,
@@ -108,6 +122,7 @@ impl NetworkManager {
             Self {
                 overlay,
                 node_id,
+                node_keypair,
                 local_addr,
                 server: Some(server),
                 command_rx,

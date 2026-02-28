@@ -156,11 +156,50 @@ struct PathNode {
     path: Vec<PathStep>,
 }
 
+/// Trust line for path finding
+#[derive(Debug, Clone)]
+pub struct TrustLine {
+    pub account: AccountID,
+    pub issuer: AccountID,
+    pub currency: Currency,
+    pub balance: Amount,
+    pub limit: Amount,
+}
+
+impl TrustLine {
+    pub fn new(account: AccountID, issuer: AccountID, currency: Currency, limit: Amount) -> Self {
+        Self {
+            account,
+            issuer,
+            currency,
+            balance: Amount::issued(0, 0, currency, issuer).unwrap_or_else(|| Amount::call(0)),
+            limit,
+        }
+    }
+
+    /// Check if this trust line can send the specified amount
+    pub fn can_send(&self, amount: &Amount) -> bool {
+        // Can send if balance >= amount (for positive balances)
+        self.balance.mantissa >= amount.mantissa
+    }
+
+    /// Check if this trust line can receive the specified amount
+    pub fn can_receive(&self, amount: &Amount) -> bool {
+        // Can receive if balance + amount <= limit
+        let new_balance = self.balance.mantissa.saturating_add(amount.mantissa);
+        new_balance <= self.limit.mantissa
+    }
+}
+
 /// Pathfinder finds paths for payments
 pub struct Pathfinder {
     max_search_depth: usize,
     /// Available offer books (currency pairs)
     offer_books: std::collections::HashMap<BookKey, OfferBook>,
+    /// Trust lines indexed by (account, currency, issuer)
+    trust_lines: std::collections::HashMap<(AccountID, Currency, AccountID), TrustLine>,
+    /// Trust lines by account for quick lookup
+    account_trust_lines: std::collections::HashMap<AccountID, Vec<(Currency, AccountID)>>,
 }
 
 impl Pathfinder {
@@ -168,12 +207,65 @@ impl Pathfinder {
         Self {
             max_search_depth: 6,
             offer_books: std::collections::HashMap::new(),
+            trust_lines: std::collections::HashMap::new(),
+            account_trust_lines: std::collections::HashMap::new(),
         }
     }
 
     /// Add an offer book for pathfinding
     pub fn add_offer_book(&mut self, key: BookKey, book: OfferBook) {
         self.offer_books.insert(key, book);
+    }
+
+    /// Add a trust line for pathfinding
+    pub fn add_trust_line(&mut self, trust_line: TrustLine) {
+        let key = (trust_line.account, trust_line.currency, trust_line.issuer);
+        self.trust_lines.insert(key, trust_line.clone());
+
+        // Also index by account for quick lookup
+        self.account_trust_lines
+            .entry(trust_line.account)
+            .or_default()
+            .push((trust_line.currency, trust_line.issuer));
+    }
+
+    /// Get trust lines for an account
+    pub fn get_account_trust_lines(&self, account: AccountID) -> Vec<&TrustLine> {
+        self.account_trust_lines
+            .get(&account)
+            .map(|lines| {
+                lines
+                    .iter()
+                    .filter_map(|(currency, issuer)| {
+                        self.trust_lines.get(&(account, *currency, *issuer))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Check if there's a trust line path between two accounts for a currency
+    fn can_send_via_trust_line(
+        &self,
+        sender: AccountID,
+        receiver: AccountID,
+        currency: Currency,
+        amount: &Amount,
+    ) -> bool {
+        // Check if sender has a trust line to receiver for this currency
+        if let Some(trust_line) = self.trust_lines.get(&(sender, currency, receiver)) {
+            return trust_line.can_send(amount);
+        }
+
+        // Check if receiver has a trust line to sender for this currency
+        // (negative balance means sender owes receiver)
+        if let Some(trust_line) = self.trust_lines.get(&(receiver, currency, sender)) {
+            // Sender can send if receiver's trust line has negative balance
+            // (meaning sender owes receiver)
+            return trust_line.balance.mantissa < 0 || trust_line.limit.mantissa >= amount.mantissa;
+        }
+
+        false
     }
 
     /// Find paths from source to destination using BFS
@@ -243,12 +335,64 @@ impl Pathfinder {
             }
 
             // Explore direct account paths (trust lines)
-            // In a real implementation, this would check trust lines
+            // Check if we can send directly to any account via trust line
+            if let Some(trust_lines) = self.account_trust_lines.get(&node.account) {
+                for (currency, issuer) in trust_lines {
+                    // Skip if not the currency we're looking for
+                    if *currency != node.currency {
+                        continue;
+                    }
+
+                    // Check if we can send via this trust line
+                    if let Some(trust_line) = self.trust_lines.get(&(node.account, *currency, *issuer)) {
+                        if trust_line.can_send(&node.amount) {
+                            let mut new_path = node.path.clone();
+                            new_path.push(PathStep {
+                                account: Some(*issuer),
+                                currency: Some(*currency),
+                                issuer: Some(*issuer),
+                            });
+
+                            queue.push_back(PathNode {
+                                account: *issuer,
+                                currency: *currency,
+                                amount: node.amount,
+                                path: new_path,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Also check if destination is directly reachable via trust line
+            if node.currency == target_currency {
+                if self.can_send_via_trust_line(node.account, destination, node.currency, &node.amount) {
+                    let mut final_path = node.path.clone();
+                    final_path.push(PathStep {
+                        account: Some(destination),
+                        currency: Some(node.currency),
+                        issuer: Some(destination),
+                    });
+                    paths.push(final_path);
+                    if paths.len() >= 10 {
+                        break;
+                    }
+                }
+            }
         }
 
-        // If no paths found, return direct path
+        // If no paths found, return direct path if possible
         if paths.is_empty() {
-            vec![vec![]]
+            // Check for direct trust line path
+            if self.can_send_via_trust_line(source, destination, target_currency, &destination_amount) {
+                vec![vec![PathStep {
+                    account: Some(destination),
+                    currency: Some(target_currency),
+                    issuer: Some(destination),
+                }]]
+            } else {
+                vec![vec![]]
+            }
         } else {
             paths
         }

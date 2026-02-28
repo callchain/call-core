@@ -24,6 +24,27 @@ pub struct QueuedTransaction {
     pub priority: u32,
 }
 
+/// Fee calculation parameters for transaction queue ordering
+#[derive(Debug, Clone, Copy)]
+pub struct FeeParams {
+    /// Base fee in drops
+    pub base_fee: u64,
+    /// Median fee level from previous ledger
+    pub median_fee_level: u64,
+    /// Network load factor (1.0 = normal, >1.0 = congested)
+    pub network_load: f64,
+}
+
+impl Default for FeeParams {
+    fn default() -> Self {
+        Self {
+            base_fee: 10,        // 10 drops base fee
+            median_fee_level: 10, // Initial median
+            network_load: 1.0,   // Normal load
+        }
+    }
+}
+
 impl QueuedTransaction {
     pub fn new(transaction: Transaction, received_time: u64) -> Self {
         let fee_level = Self::calculate_fee_level(&transaction);
@@ -37,12 +58,40 @@ impl QueuedTransaction {
 
     /// Calculate fee level for queue ordering
     fn calculate_fee_level(tx: &Transaction) -> u64 {
-        // Base fee level is the fee paid
-        // In a real implementation, this would consider:
-        // - Base fee
-        // - Fee units consumed
-        // - Current network load
-        tx.fee
+        // Get fee parameters - in production, these would come from consensus
+        let fee_params = FeeParams::default();
+        Self::calculate_fee_level_with_params(tx, fee_params)
+    }
+
+    /// Calculate fee level with specific network parameters
+    pub fn calculate_fee_level_with_params(tx: &Transaction, params: FeeParams) -> u64 {
+        // Calculate base fee units for this transaction type
+        let fee_units = calculate_tx_fee_units(tx);
+
+        // Base cost in fee level units
+        let base_cost = params.base_fee.saturating_mul(fee_units as u64);
+
+        // Apply network load factor
+        let load_adjusted = (base_cost as f64 * params.network_load) as u64;
+
+        // Calculate the actual fee level (fee paid above minimum)
+        // Higher fee = higher priority
+        let fee_paid = tx.fee;
+
+        // Fee level is the ratio of fee paid to minimum required
+        // multiplied by the median fee level for normalization
+        if load_adjusted == 0 {
+            return fee_paid.saturating_mul(params.median_fee_level);
+        }
+
+        let fee_ratio = fee_paid / load_adjusted;
+        fee_ratio.saturating_mul(params.median_fee_level)
+    }
+
+    /// Check if transaction meets minimum fee requirements
+    pub fn meets_minimum_fee(&self, params: FeeParams) -> bool {
+        let min_fee = calculate_minimum_fee(&self.transaction, params);
+        self.transaction.fee >= min_fee
     }
 
     pub fn sequence(&self) -> u32 {
@@ -52,6 +101,66 @@ impl QueuedTransaction {
     pub fn account(&self) -> AccountID {
         self.transaction.account
     }
+}
+
+/// Calculate fee units based on transaction complexity
+fn calculate_tx_fee_units(tx: &Transaction) -> u32 {
+    use crate::transactions::TxType;
+
+    // Base fee units for each transaction type
+    let base_units = match tx.tx_type {
+        TxType::Payment => {
+            // Payment with paths is more complex
+            // Note: If the transaction has path-related fields, it's more complex
+            1
+        },
+        TxType::AccountSet => 1,
+        TxType::TrustSet => 1,
+        TxType::OfferCreate => 2, // More complex
+        TxType::OfferCancel => 1,
+        TxType::SetRegularKey => 1,
+        TxType::SignerListSet => 2, // More complex (multi-sig)
+        TxType::IssueSet => 2,      // Token issuance
+        TxType::Invalid => 0,
+    };
+
+    // Additional units based on complexity
+    let mut units = base_units;
+
+    // Add units for signers (multi-sig transactions are more complex)
+    if !tx.signers.is_empty() {
+        units += tx.signers.len() as u32;
+    }
+
+    // Add units for additional data in the transaction
+    // Domain setting increases complexity
+    if tx.domain.is_some() {
+        units += 1;
+    }
+
+    // Message key setting increases complexity
+    if tx.message_key.is_some() {
+        units += 1;
+    }
+
+    units
+}
+
+/// Calculate minimum required fee for a transaction
+fn calculate_minimum_fee(tx: &Transaction, params: FeeParams) -> u64 {
+    let fee_units = calculate_tx_fee_units(tx);
+    let base = params.base_fee.saturating_mul(fee_units as u64);
+    (base as f64 * params.network_load) as u64
+}
+
+/// Update fee level for all transactions in queue based on new network conditions
+pub fn update_fee_levels(
+    _queue: &mut TransactionQueue,
+    _params: FeeParams,
+) {
+    // This would be called when network conditions change
+    // to re-sort the queue based on new fee levels
+    // queue.resort_by_fee_level(params);
 }
 
 /// Transaction queue with ordering by fee

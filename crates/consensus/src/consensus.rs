@@ -86,6 +86,12 @@ pub struct Consensus {
     round_id: u64,
     /// Unique Node List - trusted validators
     unl: Vec<ValidatorInfo>,
+    /// Time when the current ledger was opened
+    ledger_open_time: Option<std::time::Instant>,
+    /// Current transaction count in open ledger
+    current_tx_count: usize,
+    /// Current ledger size in bytes
+    current_ledger_size: usize,
 }
 
 impl Consensus {
@@ -100,6 +106,9 @@ impl Consensus {
             ledger_index: 0,
             round_id: 0,
             unl: Vec::new(),
+            ledger_open_time: Some(std::time::Instant::now()),
+            current_tx_count: 0,
+            current_ledger_size: 0,
         };
 
         // Add self as a validator
@@ -287,9 +296,52 @@ impl Consensus {
 
     /// Check if we should close the ledger (timeout or full)
     pub fn should_close_ledger(&self) -> bool {
-        // In a real implementation, check if ledger is full or timeout reached
-        // For now, always return true if in Open phase
-        self.phase == ConsensusPhase::Open
+        // Only check if ledger is open
+        if self.phase != ConsensusPhase::Open {
+            return false;
+        }
+
+        // Check transaction count limit
+        if self.current_tx_count >= self.params.ledger_max_tx_count {
+            return true;
+        }
+
+        // Check ledger size limit
+        if self.current_ledger_size >= self.params.ledger_max_size {
+            return true;
+        }
+
+        // Check time-based constraints
+        if let Some(open_time) = self.ledger_open_time {
+            let elapsed = open_time.elapsed().as_secs() as u32;
+
+            // Must stay open for minimum time
+            if elapsed < self.params.ledger_min_close_time {
+                return false;
+            }
+
+            // Must close after maximum time
+            if elapsed >= self.params.ledger_max_close_time {
+                return true;
+            }
+        }
+
+        // Check if we have enough transactions for minimum close
+        // This prevents closing empty ledgers too quickly
+        self.current_tx_count >= self.params.ledger_min_consensus
+    }
+
+    /// Add a transaction to the open ledger
+    pub fn add_transaction(&mut self, tx_size: usize) {
+        self.current_tx_count += 1;
+        self.current_ledger_size += tx_size;
+    }
+
+    /// Reset ledger tracking when opening a new ledger
+    pub fn reset_ledger_open(&mut self) {
+        self.ledger_open_time = Some(std::time::Instant::now());
+        self.current_tx_count = 0;
+        self.current_ledger_size = 0;
     }
 
     /// Check if we should accept the current position

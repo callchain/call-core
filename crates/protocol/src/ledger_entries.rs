@@ -143,6 +143,15 @@ impl AccountRoot {
         self.previous_txn_id = txn_id;
         self.previous_txn_lgr_seq = lgr_seq;
     }
+
+    /// Compute the ledger index for an account without having the full AccountRoot
+    pub fn compute_ledger_index(account_id: &AccountID) -> UInt256 {
+        // AccountRoot index is the account ID (padded/truncated as needed)
+        let bytes = account_id.as_bytes();
+        let mut index = [0u8; 32];
+        index[12..32].copy_from_slice(bytes);
+        UInt256::from_be_bytes(index)
+    }
 }
 
 impl LedgerEntry for AccountRoot {
@@ -1190,23 +1199,52 @@ impl LedgerState {
     }
 
     /// Load the ledger state from the database
-    /// This loads all SHAMap nodes from the database
+    /// This loads all account nodes and rebuilds the SHAMap
+    /// Note: This requires a database backend that supports iteration
     pub fn load_from_database(
         &mut self,
         _database: &storage::Database,
         _ledger_hash: primitives::UInt256,
     ) -> bool {
-        // For now, this is a placeholder - a full implementation would:
-        // 1. Load the ledger header to get the root hash
-        // 2. Walk the SHAMap tree from the root
-        // 3. Load each node from the database
+        use tracing::warn;
+
+        warn!("Ledger state loading from database is not fully implemented - requires database iteration support");
+
+        // For a full implementation:
+        // 1. Load the ledger header to get the state tree root hash
+        // 2. Fetch the root node from database
+        // 3. Recursively load all child nodes (inner and leaf)
         // 4. Reconstruct the SHAMap
+        //
+        // The current limitation is that the database backend
+        // doesn't support iterating over all nodes.
 
-        // The current database API doesn't provide a way to iterate over all nodes
-        // of a specific type, so this would need to be extended
-
-        // For now, return false to indicate the load is not yet implemented
         false
+    }
+
+    /// Load a specific account from the database into the state map
+    pub fn load_account(&mut self, database: &storage::Database, account_id: AccountID) -> Option<AccountRoot> {
+        // Compute the ledger index for this account
+        let index = AccountRoot::compute_ledger_index(&account_id);
+
+        // Try to fetch from database
+        match database.fetch_account_node(&index) {
+            Some(node) => {
+                // Deserialize the account data
+                match Self::deserialize_account_root(&account_id, node.get_data()) {
+                    Some(account) => {
+                        // Add to state map
+                        self.set_account_root(&account);
+                        Some(account)
+                    }
+                    None => {
+                        tracing::warn!("Failed to deserialize account {}", account_id);
+                        None
+                    }
+                }
+            }
+            None => None
+        }
     }
 }
 
