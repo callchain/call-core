@@ -6,6 +6,7 @@ use primitives::{AccountID, NodeID, UInt256};
 use storage::Database;
 use std::sync::Arc;
 use std::collections::HashMap;
+use std::path::Path;
 use tokio::sync::{RwLock, watch};
 use tokio::task::JoinHandle;
 use tracing::{info, debug, warn};
@@ -120,6 +121,198 @@ pub struct Application {
     blacklist: BlacklistStore,
     /// Issue tracker for account issues/disputes
     issue_tracker: IssueTracker,
+    /// Wallet store for secure key management
+    wallet_store: WalletStore,
+    /// Log manager for log rotation
+    log_manager: LogManager,
+    /// Feature store for protocol feature flags
+    feature_store: FeatureStore,
+}
+
+/// Log manager for handling log file rotation
+#[derive(Debug)]
+pub struct LogManager {
+    log_dir: String,
+    current_log_file: String,
+    max_files: usize,
+}
+
+impl Default for LogManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LogManager {
+    pub fn new() -> Self {
+        Self {
+            log_dir: "./logs".to_string(),
+            current_log_file: "call-core.log".to_string(),
+            max_files: 10,
+        }
+    }
+
+    /// Rotate log files
+    pub fn rotate_logs(&self) -> anyhow::Result<LogRotationResult> {
+        use std::fs;
+        use chrono::Local;
+
+        let log_path = Path::new(&self.log_dir).join(&self.current_log_file);
+
+        // Create logs directory if it doesn't exist
+        if !Path::new(&self.log_dir).exists() {
+            fs::create_dir_all(&self.log_dir)?;
+        }
+
+        // If current log file exists, rotate it
+        let rotated_count = if log_path.exists() {
+            // Generate timestamp for archived log
+            let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+            let archived_name = format!("call-core_{}.log", timestamp);
+            let archived_path = Path::new(&self.log_dir).join(&archived_name);
+
+            // Rename current log to archived name
+            fs::rename(&log_path, &archived_path)?;
+
+            // Clean up old log files if exceeding max_files
+            self.cleanup_old_logs()?;
+
+            1
+        } else {
+            0
+        };
+
+        // Create new log file (tracing will reopen it automatically when needed)
+        fs::File::create(&log_path)?;
+
+        Ok(LogRotationResult {
+            rotated_count,
+            archived_files: self.list_archived_logs()?,
+            current_log: log_path.to_string_lossy().to_string(),
+        })
+    }
+
+    /// Clean up old log files, keeping only the most recent max_files
+    fn cleanup_old_logs(&self) -> anyhow::Result<()> {
+        use std::fs;
+
+        let archived_logs = self.list_archived_logs()?;
+
+        if archived_logs.len() > self.max_files {
+            // Remove oldest files
+            for file in &archived_logs[self.max_files..] {
+                let path = Path::new(&self.log_dir).join(file);
+                let _ = fs::remove_file(path);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// List archived log files sorted by modification time (newest first)
+    fn list_archived_logs(&self) -> anyhow::Result<Vec<String>> {
+        use std::fs;
+        use std::time::SystemTime;
+
+        let mut files: Vec<(String, SystemTime)> = Vec::new();
+
+        if let Ok(entries) = fs::read_dir(&self.log_dir) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let file_name_str = file_name.to_string_lossy();
+
+                if file_name_str.starts_with("call-core_") && file_name_str.ends_with(".log") {
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(modified) = metadata.modified() {
+                            files.push((file_name_str.to_string(), modified));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by modification time, newest first
+        files.sort_by(|a, b| b.1.cmp(&a.1));
+
+        Ok(files.into_iter().map(|(name, _)| name).collect())
+    }
+
+    /// Get current log file path
+    pub fn current_log_path(&self) -> String {
+        Path::new(&self.log_dir)
+            .join(&self.current_log_file)
+            .to_string_lossy()
+            .to_string()
+    }
+}
+
+/// Result of log rotation operation
+#[derive(Debug, serde::Serialize)]
+pub struct LogRotationResult {
+    pub rotated_count: usize,
+    pub archived_files: Vec<String>,
+    pub current_log: String,
+}
+
+/// Secure wallet store for managing decrypted keys in memory
+#[derive(Debug, Default)]
+pub struct WalletStore {
+    /// Unlocked wallets (account -> private key bytes)
+    unlocked: HashMap<AccountID, Vec<u8>>,
+    /// Wallet lock status
+    locked: bool,
+}
+
+impl WalletStore {
+    pub fn new() -> Self {
+        Self {
+            unlocked: HashMap::new(),
+            locked: false,
+        }
+    }
+
+    /// Unlock a wallet with private key
+    pub fn unlock(&mut self, account: AccountID, private_key: Vec<u8>) {
+        self.unlocked.insert(account, private_key);
+    }
+
+    /// Lock (clear) all stored keys
+    pub fn lock(&mut self) {
+        // Clear all keys from memory
+        for (_, key) in self.unlocked.iter_mut() {
+            key.zeroize();
+        }
+        self.unlocked.clear();
+        self.locked = true;
+    }
+
+    /// Check if wallet is locked
+    pub fn is_locked(&self) -> bool {
+        self.locked || self.unlocked.is_empty()
+    }
+
+    /// Get number of unlocked wallets
+    pub fn unlocked_count(&self) -> usize {
+        self.unlocked.len()
+    }
+
+    /// Get a private key for an account (if unlocked)
+    pub fn get_key(&self, account: &AccountID) -> Option<&Vec<u8>> {
+        self.unlocked.get(account)
+    }
+}
+
+/// Trait for zeroizing sensitive data
+trait Zeroize {
+    fn zeroize(&mut self);
+}
+
+impl Zeroize for Vec<u8> {
+    fn zeroize(&mut self) {
+        for byte in self.iter_mut() {
+            *byte = 0;
+        }
+    }
 }
 
 /// Issue tracker for managing account issues and disputes
@@ -321,6 +514,140 @@ impl BlacklistStore {
     }
 }
 
+/// Feature store for managing protocol feature flags
+#[derive(Debug, Default)]
+pub struct FeatureStore {
+    /// Feature flags by name
+    features: HashMap<String, FeatureFlag>,
+}
+
+/// Individual feature flag
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FeatureFlag {
+    pub enabled: bool,
+    pub supported: bool,
+    pub description: String,
+    pub updated_at: u64,
+}
+
+impl FeatureStore {
+    pub fn new() -> Self {
+        let mut store = Self {
+            features: HashMap::new(),
+        };
+        // Initialize with default features
+        store.init_defaults();
+        store
+    }
+
+    /// Initialize default feature flags
+    fn init_defaults(&mut self) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let defaults = vec![
+            ("FeatureDepositAuth", false, "Deposit authorization feature"),
+            ("FeatureChecksFix", true, "Checks fix feature"),
+            ("FeatureFix1513", true, "Fix for issue 1513"),
+            ("FeatureFix1543", true, "Fix for issue 1543"),
+            ("FeatureFlowSort", true, "Flow sort feature"),
+            ("FeaturePaychanAndEscrow", true, "Payment channel and escrow"),
+            ("FeatureTicketBatch", false, "Ticket batching feature"),
+        ];
+
+        for (name, enabled, desc) in defaults {
+            self.features.insert(name.to_string(), FeatureFlag {
+                enabled,
+                supported: true,
+                description: desc.to_string(),
+                updated_at: now,
+            });
+        }
+    }
+
+    /// Get a feature flag
+    pub fn get(&self, name: &str) -> Option<&FeatureFlag> {
+        self.features.get(name)
+    }
+
+    /// Set a feature flag's enabled status
+    pub fn set_enabled(&mut self, name: &str, enabled: bool) -> bool {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        if let Some(flag) = self.features.get_mut(name) {
+            flag.enabled = enabled;
+            flag.updated_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get all features as JSON
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut obj = serde_json::Map::new();
+        for (name, flag) in &self.features {
+            obj.insert(name.clone(), serde_json::json!({
+                "enabled": flag.enabled,
+                "supported": flag.supported,
+            }));
+        }
+        serde_json::Value::Object(obj)
+    }
+
+    /// Check if a feature is enabled
+    pub fn is_enabled(&self, name: &str) -> bool {
+        self.features.get(name).map(|f| f.enabled).unwrap_or(false)
+    }
+
+    /// Load features from file
+    pub fn load_from_file(&mut self, path: &str) -> anyhow::Result<()> {
+        use std::fs;
+
+        if !Path::new(path).exists() {
+            // No file yet, use defaults
+            return Ok(());
+        }
+
+        let content = fs::read_to_string(path)?;
+        let saved: HashMap<String, bool> = serde_json::from_str(&content)?;
+
+        for (name, enabled) in saved {
+            if let Some(flag) = self.features.get_mut(&name) {
+                flag.enabled = enabled;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Save features to file
+    pub fn save_to_file(&self, path: &str) -> anyhow::Result<()> {
+        use std::fs;
+
+        // Create directory if needed
+        if let Some(parent) = Path::new(path).parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut to_save = HashMap::new();
+        for (name, flag) in &self.features {
+            to_save.insert(name.clone(), flag.enabled);
+        }
+
+        let content = serde_json::to_string_pretty(&to_save)?;
+        fs::write(path, content)?;
+
+        Ok(())
+    }
+}
+
 impl Application {
     /// Create a new application instance
     pub fn new(config: Config) -> anyhow::Result<Self> {
@@ -375,6 +702,19 @@ impl Application {
         // Initialize issue tracker
         let issue_tracker = IssueTracker::new();
 
+        // Initialize wallet store
+        let wallet_store = WalletStore::new();
+
+        // Initialize log manager
+        let log_manager = LogManager::new();
+
+        // Initialize feature store and load saved features
+        let mut feature_store = FeatureStore::new();
+        let feature_file = format!("{}/features.json", config.data_dir);
+        if let Err(e) = feature_store.load_from_file(&feature_file) {
+            warn!("Failed to load feature flags from file: {}", e);
+        }
+
         info!("Application initialized with node_id: {:?}", node_id);
 
         Ok(Self {
@@ -395,6 +735,9 @@ impl Application {
             tx_history,
             blacklist,
             issue_tracker,
+            wallet_store,
+            log_manager,
+            feature_store,
         })
     }
 
@@ -464,6 +807,48 @@ impl Application {
         let ledger_state = &self.ledger_state;
         let current_ledger = self.current_ledger_seq;
         self.issue_tracker.scan_account_issues(account, ledger_state, current_ledger)
+    }
+
+    /// Get the wallet store
+    pub fn get_wallet_store(&self) -> &WalletStore {
+        &self.wallet_store
+    }
+
+    /// Get the wallet store (mutable)
+    pub fn get_wallet_store_mut(&mut self) -> &mut WalletStore {
+        &mut self.wallet_store
+    }
+
+    /// Lock all wallets (clear decrypted keys from memory)
+    pub fn lock_wallets(&mut self) {
+        self.wallet_store.lock();
+        info!("All wallets locked - keys cleared from memory");
+    }
+
+    /// Get the log manager
+    pub fn get_log_manager(&self) -> &LogManager {
+        &self.log_manager
+    }
+
+    /// Rotate log files
+    pub fn rotate_logs(&self) -> anyhow::Result<LogRotationResult> {
+        self.log_manager.rotate_logs()
+    }
+
+    /// Get the feature store
+    pub fn get_feature_store(&self) -> &FeatureStore {
+        &self.feature_store
+    }
+
+    /// Get the feature store (mutable)
+    pub fn get_feature_store_mut(&mut self) -> &mut FeatureStore {
+        &mut self.feature_store
+    }
+
+    /// Save feature flags to file
+    pub fn save_features(&self) -> anyhow::Result<()> {
+        let feature_file = format!("{}/features.json", self.config.data_dir);
+        self.feature_store.save_to_file(&feature_file)
     }
 
     /// Index a transaction for account history

@@ -676,24 +676,70 @@ async fn send_response(
 }
 
 /// Connection handler
+/// Handle a raw TCP connection and upgrade to WebSocket
+///
+/// This function accepts a raw TCP stream, performs the WebSocket handshake,
+/// and then handles the connection. For axum-based servers, use ws_handler
+/// which leverages axum's built-in WebSocket upgrade handling.
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     conn_id: u64,
     addr: String,
-    connections: Arc<RwLock<ConnectionManager>>,
-    ledger_tx: broadcast::Sender<serde_json::Value>,
+    _connections: Arc<RwLock<ConnectionManager>>,
+    _ledger_tx: broadcast::Sender<serde_json::Value>,
     _transactions_tx: broadcast::Sender<serde_json::Value>,
     _validations_tx: broadcast::Sender<serde_json::Value>,
-    consensus_tx: broadcast::Sender<serde_json::Value>,
-    peer_tx: broadcast::Sender<serde_json::Value>,
+    _consensus_tx: broadcast::Sender<serde_json::Value>,
+    _peer_tx: broadcast::Sender<serde_json::Value>,
 ) {
-    // For a proper implementation, we'd use axum's WebSocketUpgrade
-    // This is a simplified version that assumes the stream is already upgraded
-    // In practice, this would be handled by the HTTP router
+    debug!("Handling raw TCP connection {} from {}", conn_id, addr);
 
-    // Skip actual WebSocket handling here - it's done in handle_socket
-    // This function is a placeholder for the TCP stream handling
-    let _ = (stream, conn_id, addr, connections, ledger_tx, consensus_tx, peer_tx);
+    // For standalone TCP connections (without HTTP upgrade), we use tokio_tungstenite
+    // This is used when the node is running in raw TCP mode without the HTTP server
+    match tokio_tungstenite::accept_async(stream).await {
+        Ok(ws_stream) => {
+            info!("WebSocket connection {} established with {}", conn_id, addr);
+
+            // Split the stream for separate read/write
+            let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+
+            // Handle the connection - simple echo/ping-pong for now
+            // In a full implementation, this would integrate with the subscription system
+            loop {
+                match ws_receiver.next().await {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                        debug!("Received text from {}: {}", addr, text);
+                        // Echo back for now - proper handling would parse WsRequest
+                        let response = format!("Echo: {}", text);
+                        if let Err(e) = ws_sender.send(tokio_tungstenite::tungstenite::Message::Text(response)).await {
+                            error!("Failed to send to {}: {}", addr, e);
+                            break;
+                        }
+                    }
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(data))) => {
+                        if let Err(e) = ws_sender.send(tokio_tungstenite::tungstenite::Message::Pong(data)).await {
+                            error!("Failed to send pong to {}: {}", addr, e);
+                            break;
+                        }
+                    }
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) => {
+                        info!("Connection {} closed by peer", conn_id);
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        error!("WebSocket error on connection {}: {}", conn_id, e);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => {
+            error!("WebSocket handshake failed for connection {}: {}", conn_id, e);
+        }
+    }
+
+    info!("Connection {} handler exiting", conn_id);
 }
 
 /// Background task that polls the application and broadcasts updates

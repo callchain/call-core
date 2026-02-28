@@ -193,6 +193,16 @@ impl Message {
     pub fn ping() -> Self {
         Self::new(MessageType::Ping, vec![])
     }
+
+    /// Create a get_ledger message
+    pub fn get_ledger(ledger_index: LedgerIndex) -> Self {
+        // Serialize get_ledger request
+        // Format: ledger_index (4 bytes) + flags (1 byte)
+        let mut payload = Vec::with_capacity(5);
+        payload.extend_from_slice(&ledger_index.to_be_bytes());
+        payload.push(0x00); // flags: 0 = full ledger data
+        Self::new(MessageType::GetLedger, payload)
+    }
 }
 
 /// Hello message for handshake
