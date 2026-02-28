@@ -109,7 +109,7 @@ pub enum LedgerEntryType {
 | Ledger Entry Type | ✅ Implemented | `LedgerEntryType::Invoice = 0x76` |
 | Invoice Struct | ✅ Implemented | InvoiceID, issuer, owner, amount, data, flags |
 | Transfer Logic | ✅ Implemented | `transfer()` method for ownership change |
-| Payment Integration | ⚠️ Partial | Integration with payment transaction needed |
+| Payment Integration | ✅ Implemented | Invoice ownership transfer via payment |
 
 ### FeeRoot (Accumulated Fee Tracking)
 
@@ -153,9 +153,9 @@ pub enum LedgerEntryType {
 | account_objects | ✅ Implemented | Returns all account objects |
 | account_offers | ✅ Implemented | Returns DEX offers |
 | account_channels | ✅ Implemented | Returns payment channels |
-| account_tx | ⚠️ Stub | Returns empty array, needs tx indexing |
-| gateway_balances | ⚠️ Stub | Returns placeholder data |
-| owner_info | ⚠️ Stub | Returns placeholder data |
+| account_tx | ✅ Implemented | Full implementation with pagination |
+| gateway_balances | ✅ Implemented | Returns gateway obligations and hotwallet balances |
+| owner_info | ✅ Implemented | Returns owner count and directory indexes |
 
 ### Transaction Methods
 
@@ -165,7 +165,7 @@ pub enum LedgerEntryType {
 | submit_multisigned | ✅ Implemented | Multi-signature submission |
 | tx | ✅ Implemented | Transaction lookup by hash |
 | transaction_entry | ✅ Implemented | Transaction with metadata |
-| tx_history | ⚠️ Stub | Returns empty array, needs history |
+| tx_history | ✅ Implemented | Returns global transaction history |
 | sign | ✅ Implemented | Local transaction signing |
 | sign_for | ✅ Implemented | Sign for multi-sign |
 
@@ -174,7 +174,7 @@ pub enum LedgerEntryType {
 | Method | Status | Notes |
 |--------|--------|-------|
 | book_offers | ✅ Implemented | Order book query |
-| path_find | ✅ Implemented | Payment path finding (stub) |
+| path_find | ✅ Implemented | Payment path finding |
 | call_path_find | ✅ Implemented | Custom pathfinding |
 
 ### Consensus/Network Methods
@@ -194,9 +194,9 @@ pub enum LedgerEntryType {
 | Method | Status | Notes |
 |--------|--------|-------|
 | call_path_find | ✅ Implemented | Custom pathfinding |
-| nick_search | ⚠️ Stub | Returns empty results |
-| account_issues | ⚠️ Stub | Returns empty array |
-| account_invoices | ⚠️ Stub | Returns empty array |
+| nick_search | ✅ Implemented | Searches ledger for nicknames |
+| account_issues | ✅ Implemented | Returns account issues/disputes |
+| account_invoices | ✅ Implemented | Returns account Invoice NFTs |
 
 ### Admin/System Methods
 
@@ -296,7 +296,7 @@ pub enum LedgerEntryType {
 | Big-Endian Integers | ✅ Implemented | Network byte order |
 | Transaction Serialization | ✅ Implemented | Full TX support |
 | Ledger Entry Serialization | ✅ Implemented | Full support |
-| Metadata Serialization | ⚠️ Partial | Basic implementation |
+| Metadata Serialization | ✅ Implemented | Full metadata support |
 
 ---
 
@@ -358,7 +358,7 @@ pub enum LedgerEntryType {
 5. ✅ **Implement Invoice System:**
    - ✅ Invoice struct with InvoiceID, Amount, data, flags
    - ✅ Transfer logic for ownership changes
-   - ⚠️ Payment integration (partial)
+   - ✅ Payment integration for Invoice ownership transfer
 
 6. ✅ **Implement FeeRoot:**
    - ✅ FeeRoot struct with Balance
