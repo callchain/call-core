@@ -172,6 +172,7 @@ impl TransactionEngine {
             TxType::AccountSet => self.preflight_account_set(ctx, tx),
             TxType::SetRegularKey => self.preflight_set_regular_key(ctx, tx),
             TxType::SignerListSet => self.preflight_signer_list_set(ctx, tx),
+            TxType::NicknameSet => self.preflight_nickname_set(ctx, tx),
             _ => TER::temINVALID_TRANSACTION_TYPE,
         }
     }
@@ -205,6 +206,7 @@ impl TransactionEngine {
             TxType::AccountSet => self.preclaim_account_set(ctx, tx, &account),
             TxType::SetRegularKey => self.preclaim_set_regular_key(ctx, tx, &account),
             TxType::SignerListSet => self.preclaim_signer_list_set(ctx, tx, &account),
+            TxType::NicknameSet => self.preclaim_nickname_set(ctx, tx, &account),
             _ => TER::temINVALID_TRANSACTION_TYPE,
         }
     }
@@ -241,6 +243,7 @@ impl TransactionEngine {
             TxType::AccountSet => self.apply_account_set(ctx, tx, &mut account, &mut result),
             TxType::SetRegularKey => self.apply_set_regular_key(ctx, tx, &mut account, &mut result),
             TxType::SignerListSet => self.apply_signer_list_set(ctx, tx, &mut account, &mut result),
+            TxType::NicknameSet => self.apply_nickname_set(ctx, tx, &mut account, &mut result),
             _ => TER::tecINTERNAL,
         };
 
@@ -668,6 +671,130 @@ impl TransactionEngine {
 
         TER::tesSUCCESS
     }
+}
+
+// NicknameSet transaction implementation
+impl TransactionEngine {
+    fn preflight_nickname_set(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Must have a nickname
+        if tx.nickname.is_none() {
+            return TER::temBAD_SIGNATURE; // Using appropriate error code
+        }
+
+        let nickname = tx.nickname.as_ref().unwrap();
+
+        // Nickname must not be empty
+        if nickname.is_empty() {
+            return TER::temBAD_SIGNATURE;
+        }
+
+        // Nickname must not be too long (max 128 bytes)
+        if nickname.len() > 128 {
+            return TER::temBAD_SIGNATURE;
+        }
+
+        // Validate nickname characters (alphanumeric, underscore, hyphen, dot)
+        for byte in nickname {
+            if !byte.is_ascii_alphanumeric()
+                && *byte != b'_'
+                && *byte != b'-'
+                && *byte != b'.'
+            {
+                return TER::temBAD_SIGNATURE;
+            }
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_nickname_set(&self, ctx: &ApplyContext, tx: &Transaction, account: &AccountRoot) -> TER {
+        // Check if nickname already exists for another account
+        if let Some(ref nickname) = tx.nickname {
+            let nickname_hash = crypto::sha256(nickname);
+            let nickname_index = UInt256::new(nickname_hash);
+
+            // Check if this nickname is already taken by another account
+            if let Some(existing_nickname) = ctx.ledger.get_nickname_entry(&nickname_index) {
+                if existing_nickname.account != tx.account {
+                    return TER::terDUPLICATE;
+                }
+            }
+        }
+
+        // Check if account has sufficient reserve for creating new ledger entry
+        // Only if they don't already have a nickname
+        let has_existing_nickname = ctx.ledger.get_account_nicknames(&tx.account).len() > 0;
+
+        if !has_existing_nickname {
+            // Creating new nickname entry requires reserve
+            // Default reserve: 10 CALL base + 2 CALL per owner object
+            let reserve_base: u64 = 10_000_000; // 10 CALL in drops
+            let reserve_inc: u64 = 2_000_000;   // 2 CALL in drops
+            let owner_reserve = reserve_base + (account.owner_count as u64 * reserve_inc);
+
+            if (account.balance.mantissa.max(0) as u64) < owner_reserve + tx.fee {
+                return TER::tecINSUF_RESERVE_OFFER;
+            }
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn apply_nickname_set(
+        &self,
+        ctx: &mut ApplyContext,
+        tx: &Transaction,
+        account: &mut AccountRoot,
+        result: &mut TxResult,
+    ) -> TER {
+        use crate::ledger_entries::NicknameEntry;
+
+        let nickname = match &tx.nickname {
+            Some(n) => n.clone(),
+            None => return TER::tecINTERNAL,
+        };
+
+        // Compute nickname index (hash of nickname)
+        let nickname_hash = crypto::sha256(&nickname);
+        let nickname_index = UInt256::new(nickname_hash);
+
+        // Check if nickname already exists for this account
+        let is_new = match ctx.ledger.get_nickname_entry(&nickname_index) {
+            Some(existing) if existing.account == tx.account => false,
+            Some(_) => return TER::tecDUPLICATE, // Should have been caught in preclaim
+            None => true,
+        };
+
+        // Create or update nickname entry
+        let mut nickname_entry = NicknameEntry::new(
+            nickname,
+            account.account,
+        );
+
+        // Set minimum offer if provided
+        if let Some(min_offer) = &tx.min_offer {
+            nickname_entry.min_offer = Some(min_offer.clone());
+        }
+
+        // Update previous txn info
+        nickname_entry.update_previous_txn(tx.get_hash(), ctx.ledger_seq);
+
+        // Store the nickname entry
+        ctx.ledger.set_nickname_entry(&nickname_entry);
+
+        // Update account owner count if this is a new nickname
+        if is_new {
+            account.owner_count = account.owner_count.saturating_add(1);
+        }
+
+        // Track affected nodes for metadata
+        result.affected_nodes.push(AffectedLedgerNode::Created {
+            ledger_index: nickname_index,
+            data: vec![], // Would serialize the entry in full implementation
+        });
+
+        TER::tesSUCCESS
+    }
 
     /// Verify transaction signature cryptographically
     fn verify_transaction_signature(&self, tx: &Transaction) -> bool {
@@ -870,6 +997,16 @@ mod tests {
         }
 
         fn set_signer_list(&mut self, _signer_list: &crate::ledger_entries::SignerList) {}
+
+        fn get_nickname_entry(&self, _nickname_index: &UInt256) -> Option<crate::ledger_entries::NicknameEntry> {
+            None
+        }
+
+        fn set_nickname_entry(&mut self, _nickname: &crate::ledger_entries::NicknameEntry) {}
+
+        fn get_account_nicknames(&self, _account: &AccountID) -> Vec<crate::ledger_entries::NicknameEntry> {
+            Vec::new()
+        }
     }
 
     #[test]

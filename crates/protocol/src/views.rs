@@ -39,6 +39,21 @@ pub trait LedgerView {
 
     /// Set a SignerList
     fn set_signer_list(&mut self, signer_list: &crate::ledger_entries::SignerList);
+
+    /// Get a NicknameEntry by index
+    fn get_nickname_entry(
+        &self,
+        nickname_index: &UInt256,
+    ) -> Option<crate::ledger_entries::NicknameEntry>;
+
+    /// Set a NicknameEntry
+    fn set_nickname_entry(&mut self, nickname: &crate::ledger_entries::NicknameEntry);
+
+    /// Get all nicknames owned by an account
+    fn get_account_nicknames(
+        &self,
+        account: &AccountID,
+    ) -> Vec<crate::ledger_entries::NicknameEntry>;
 }
 
 /// Simple ledger view implementation for testing
@@ -92,6 +107,22 @@ impl LedgerView for BasicLedgerView {
     }
 
     fn set_signer_list(&mut self, _signer_list: &crate::ledger_entries::SignerList) {}
+
+    fn get_nickname_entry(
+        &self,
+        _nickname_index: &UInt256,
+    ) -> Option<crate::ledger_entries::NicknameEntry> {
+        None
+    }
+
+    fn set_nickname_entry(&mut self, _nickname: &crate::ledger_entries::NicknameEntry) {}
+
+    fn get_account_nicknames(
+        &self,
+        _account: &AccountID,
+    ) -> Vec<crate::ledger_entries::NicknameEntry> {
+        Vec::new()
+    }
 }
 
 use crate::ledger_entries::LedgerState;
@@ -153,5 +184,17 @@ impl<'a> LedgerView for MutableLedgerView<'a> {
 
     fn set_signer_list(&mut self, signer_list: &crate::ledger_entries::SignerList) {
         self.state.set_signer_list(signer_list);
+    }
+
+    fn get_nickname_entry(&self, nickname_index: &UInt256) -> Option<crate::ledger_entries::NicknameEntry> {
+        self.state.get_nickname_entry(nickname_index)
+    }
+
+    fn set_nickname_entry(&mut self, nickname: &crate::ledger_entries::NicknameEntry) {
+        self.state.set_nickname_entry(nickname);
+    }
+
+    fn get_account_nicknames(&self, account: &AccountID) -> Vec<crate::ledger_entries::NicknameEntry> {
+        self.state.get_account_nicknames(account)
     }
 }

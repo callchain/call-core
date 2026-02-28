@@ -9,6 +9,7 @@ pub enum TxType {
     Payment = 0,
     AccountSet = 3,
     SetRegularKey = 5,
+    NicknameSet = 6,
     OfferCreate = 7,
     OfferCancel = 8,
     SignerListSet = 12,
@@ -27,6 +28,7 @@ impl TxType {
             0 => Some(Self::Payment),
             3 => Some(Self::AccountSet),
             5 => Some(Self::SetRegularKey),
+            6 => Some(Self::NicknameSet),
             7 => Some(Self::OfferCreate),
             8 => Some(Self::OfferCancel),
             12 => Some(Self::SignerListSet),
@@ -190,6 +192,9 @@ pub struct Transaction {
     pub signers: Vec<SignerEntry>,
     // IssueSet fields
     pub total_supply: Option<Amount>,
+    // NicknameSet fields
+    pub nickname: Option<Vec<u8>>,
+    pub min_offer: Option<Amount>,
 }
 
 impl Transaction {
@@ -226,6 +231,8 @@ impl Transaction {
             signer_quorum: 0,
             signers: Vec::new(),
             total_supply: None,
+            nickname: None,
+            min_offer: None,
         }
     }
 
@@ -288,6 +295,13 @@ impl Transaction {
     pub fn new_issue_set(account: AccountID, amount: Amount, sequence: u32) -> Self {
         let mut tx = Self::new(TxType::IssueSet, account, sequence);
         tx.amount = Some(amount);
+        tx
+    }
+
+    /// Create a new nickname set transaction
+    pub fn new_nickname_set(account: AccountID, nickname: Vec<u8>, sequence: u32) -> Self {
+        let mut tx = Self::new(TxType::NicknameSet, account, sequence);
+        tx.nickname = Some(nickname);
         tx
     }
 
@@ -430,8 +444,20 @@ mod tests {
         assert_eq!(TxType::from_i16(8), Some(TxType::OfferCancel));
         assert_eq!(TxType::from_i16(12), Some(TxType::SignerListSet));
         assert_eq!(TxType::from_i16(16), Some(TxType::IssueSet));
+        assert_eq!(TxType::from_i16(6), Some(TxType::NicknameSet));
         assert_eq!(TxType::from_i16(20), Some(TxType::TrustSet));
         assert_eq!(TxType::from_i16(999), None);
+    }
+
+    #[test]
+    fn test_nickname_set_transaction() {
+        let account = AccountID::new([1u8; 20]);
+        let nickname = b"alice".to_vec();
+        let tx = Transaction::new_nickname_set(account, nickname.clone(), 1);
+
+        assert_eq!(tx.get_tx_type(), TxType::NicknameSet);
+        assert_eq!(tx.nickname, Some(nickname));
+        assert_eq!(tx.get_sequence(), 1);
     }
 
     #[test]

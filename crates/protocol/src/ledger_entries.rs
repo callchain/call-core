@@ -1640,6 +1640,35 @@ impl LedgerState {
         self.state_map.add_item(index, item);
     }
 
+    /// Get a NicknameEntry by index
+    pub fn get_nickname_entry(&self, nickname_index: &UInt256) -> Option<NicknameEntry> {
+        self.state_map.get_item(nickname_index).and_then(|item| {
+            Self::deserialize_nickname(item.data())
+        })
+    }
+
+    /// Set a NicknameEntry
+    pub fn set_nickname_entry(&mut self, nickname: &NicknameEntry) {
+        use shamap::SHAMapItem;
+        let index = nickname.ledger_index();
+        let data = Self::serialize_nickname(nickname);
+        let item = SHAMapItem::new(index, data);
+        self.state_map.add_item(index, item);
+    }
+
+    /// Get all nicknames owned by an account
+    pub fn get_account_nicknames(&self, account: &AccountID) -> Vec<NicknameEntry> {
+        let mut results = Vec::new();
+        for item in self.state_map.iter() {
+            if let Some(nickname) = Self::deserialize_nickname(item.data()) {
+                if nickname.account == *account {
+                    results.push(nickname);
+                }
+            }
+        }
+        results
+    }
+
     // Serialization helpers
     /// Iterate over all entries in the ledger state
     pub fn iter(&self) -> impl Iterator<Item = &shamap::SHAMapItem> {

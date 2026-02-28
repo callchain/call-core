@@ -121,6 +121,7 @@ fn calculate_tx_fee_units(tx: &Transaction) -> u32 {
         TxType::SetRegularKey => 1,
         TxType::SignerListSet => 2, // More complex (multi-sig)
         TxType::IssueSet => 2,      // Token issuance
+        TxType::NicknameSet => 1,   // Nickname registration
         TxType::Invalid => 0,
     };
 
@@ -556,6 +557,22 @@ mod tests {
         }
 
         fn set_signer_list(&mut self, _signer_list: &crate::ledger_entries::SignerList) {}
+
+        fn get_nickname_entry(
+            &self,
+            _nickname_index: &UInt256,
+        ) -> Option<crate::ledger_entries::NicknameEntry> {
+            None
+        }
+
+        fn set_nickname_entry(&mut self, _nickname: &crate::ledger_entries::NicknameEntry) {}
+
+        fn get_account_nicknames(
+            &self,
+            _account: &AccountID,
+        ) -> Vec<crate::ledger_entries::NicknameEntry> {
+            Vec::new()
+        }
     }
 
     #[test]
