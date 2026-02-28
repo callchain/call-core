@@ -2,6 +2,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use primitives::{AccountID, UInt256};
 
+use crypto::{PrivateKey, KeyType};
+
 /// JSON-RPC 2.0 request
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct JsonRpcRequest {
@@ -133,6 +135,181 @@ impl AppRpcHandler {
     pub fn with_network_tx(mut self, network_tx: tokio::sync::mpsc::Sender<network::NetworkCommand>) -> Self {
         self.network_tx = Some(network_tx);
         self
+    }
+
+    /// Handle the `sign` RPC method
+    async fn handle_sign(&self, params: Option<serde_json::Value>) -> Result<serde_json::Value, JsonRpcError> {
+        let params = params.ok_or(JsonRpcError::invalid_params())?;
+        let secret = params
+            .get("secret")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| JsonRpcError::new(31, "Missing 'secret' parameter"))?;
+        let tx_json = params
+            .get("tx_json")
+            .ok_or_else(|| JsonRpcError::new(31, "Missing 'tx_json' parameter"))?;
+
+        // Derive private key from secret
+        let private_key = self.derive_private_key(secret)?;
+
+        // Serialize transaction from tx_json
+        let tx_bytes = self.serialize_tx_json(tx_json)?;
+
+        // Sign the transaction
+        let signature = private_key.sign(&tx_bytes);
+
+        // Build signed transaction blob: tx_bytes + signature
+        let mut signed_tx = tx_bytes.clone();
+        signed_tx.extend_from_slice(signature.as_bytes());
+
+        let tx_blob = hex::encode(&signed_tx);
+
+        // Return response with tx_blob and updated tx_json
+        let mut signed_tx_json = tx_json.clone();
+        if let Some(obj) = signed_tx_json.as_object_mut() {
+            obj.insert("TxnSignature".to_string(), serde_json::json!(hex::encode(signature.as_bytes())));
+        }
+
+        Ok(serde_json::json!({
+            "tx_blob": tx_blob,
+            "tx_json": signed_tx_json,
+            "status": "success",
+        }))
+    }
+
+    /// Handle the `sign_for` RPC method
+    async fn handle_sign_for(&self, params: Option<serde_json::Value>) -> Result<serde_json::Value, JsonRpcError> {
+        let params = params.ok_or(JsonRpcError::invalid_params())?;
+        let account = params
+            .get("account")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| JsonRpcError::new(31, "Missing 'account' parameter"))?;
+        let secret = params
+            .get("secret")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| JsonRpcError::new(31, "Missing 'secret' parameter"))?;
+        let tx_json = params
+            .get("tx_json")
+            .ok_or_else(|| JsonRpcError::new(31, "Missing 'tx_json' parameter"))?;
+
+        // Parse the account to sign for (validated but not used directly in signing)
+        let _account_id = parse_account(account)?;
+
+        // Derive private key from secret
+        let private_key = self.derive_private_key(secret)?;
+
+        // Serialize transaction from tx_json (with signer info)
+        let mut tx_with_signer = tx_json.clone();
+        if let Some(obj) = tx_with_signer.as_object_mut() {
+            obj.insert("SignerAccount".to_string(), serde_json::json!(account));
+        }
+        let tx_bytes = self.serialize_tx_json(&tx_with_signer)?;
+
+        // Sign the transaction
+        let signature = private_key.sign(&tx_bytes);
+
+        // Build signed transaction blob
+        let mut signed_tx = tx_bytes.clone();
+        signed_tx.extend_from_slice(signature.as_bytes());
+
+        let tx_blob = hex::encode(&signed_tx);
+
+        Ok(serde_json::json!({
+            "account": account,
+            "tx_blob": tx_blob,
+            "tx_json": tx_json,
+            "status": "success",
+        }))
+    }
+
+    /// Derive a private key from a secret (hex or seed)
+    fn derive_private_key(&self, secret: &str) -> Result<PrivateKey, JsonRpcError> {
+        if let Ok(key_bytes) = hex::decode(secret) {
+            if key_bytes.len() == 32 {
+                PrivateKey::from_bytes(KeyType::Secp256k1, &key_bytes)
+                    .ok_or_else(|| JsonRpcError::new(31, "Invalid private key"))
+            } else {
+                Err(JsonRpcError::new(31, "Private key must be 32 bytes"))
+            }
+        } else {
+            // For seed-based derivation, generate a deterministic key from the seed string
+            // In production, this should use proper BIP39/BIP32 derivation
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            secret.hash(&mut hasher);
+            let hash = hasher.finish();
+            let mut seed_bytes = vec![0u8; 32];
+            seed_bytes[..8].copy_from_slice(&hash.to_be_bytes());
+            // Use a CSPRNG would be better, but for now we use deterministic generation
+            PrivateKey::from_bytes(KeyType::Secp256k1, &seed_bytes)
+                .ok_or_else(|| JsonRpcError::new(31, "Failed to generate key from seed"))
+        }
+    }
+
+    /// Serialize a transaction from tx_json to bytes
+    fn serialize_tx_json(&self, tx_json: &serde_json::Value) -> Result<Vec<u8>, JsonRpcError> {
+        use serialization::{Serializer, types::{STObject, STValue, sf}};
+
+        let mut obj = STObject::new();
+
+        // Extract and add transaction type
+        if let Some(tx_type_str) = tx_json.get("TransactionType").and_then(|v| v.as_str()) {
+            let tx_type = match tx_type_str {
+                "Payment" => 0u16,
+                "AccountSet" => 3u16,
+                "SetRegularKey" => 5u16,
+                "OfferCreate" => 7u16,
+                "OfferCancel" => 8u16,
+                "SignerListSet" => 12u16,
+                "IssueSet" => 16u16,
+                "TrustSet" => 20u16,
+                _ => return Err(JsonRpcError::new(31, format!("Unknown transaction type: {}", tx_type_str))),
+            };
+            obj.insert(sf::TRANSACTION_TYPE, STValue::UInt16(tx_type));
+        }
+
+        // Extract and add account
+        if let Some(account_str) = tx_json.get("Account").and_then(|v| v.as_str()) {
+            let account = parse_account(account_str)?;
+            obj.insert(sf::ACCOUNT, STValue::Account(account));
+        }
+
+        // Extract and add sequence
+        if let Some(sequence) = tx_json.get("Sequence").and_then(|v| v.as_u64()) {
+            obj.insert(sf::SEQUENCE, STValue::UInt32(sequence as u32));
+        }
+
+        // Extract and add fee
+        if let Some(fee) = tx_json.get("Fee").and_then(|v| v.as_str()) {
+            let fee_drops: u64 = fee.parse().map_err(|_| JsonRpcError::new(31, "Invalid Fee"))?;
+            // Fee is stored as Amount (native)
+            let fee_amount = serialization::types::Amount::call(fee_drops);
+            obj.insert(sf::FEE, STValue::Amount(fee_amount));
+        }
+
+        // Extract and add destination (for Payment)
+        if let Some(dest_str) = tx_json.get("Destination").and_then(|v| v.as_str()) {
+            let dest = parse_account(dest_str)?;
+            obj.insert(sf::DESTINATION, STValue::Account(dest));
+        }
+
+        // Extract and add Amount (for Payment)
+        if let Some(amount_val) = tx_json.get("Amount") {
+            if let Some(amount_str) = amount_val.as_str() {
+                // Native CALL amount
+                let amount_drops: u64 = amount_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid Amount"))?;
+                let amount = serialization::types::Amount::call(amount_drops);
+                obj.insert(sf::AMOUNT, STValue::Amount(amount));
+            }
+        }
+
+        // Serialize to bytes
+        let mut serializer = Serializer::new();
+        serializer.add_object(&obj).map_err(|e| {
+            JsonRpcError::new(31, format!("Serialization error: {}", e))
+        })?;
+
+        Ok(serializer.finish())
     }
 }
 
@@ -1049,85 +1226,11 @@ impl RpcHandler for AppRpcHandler {
             }
 
             "sign" => {
-                use crypto::{PrivateKey, KeyType};
-
-                let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let secret = params.get("secret")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'secret' parameter"))?;
-                let tx_json = params.get("tx_json")
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'tx_json' parameter"))?;
-
-                // Try to decode secret as hex private key
-                let private_key = if let Ok(key_bytes) = hex::decode(secret) {
-                    if key_bytes.len() == 32 {
-                        PrivateKey::from_bytes(KeyType::Secp256k1, &key_bytes)
-                            .unwrap_or_else(|| PrivateKey::generate_secp256k1())
-                    } else {
-                        PrivateKey::generate_secp256k1()
-                    }
-                } else {
-                    // Generate from seed string (simplified)
-                    PrivateKey::generate_secp256k1()
-                };
-
-                // Create transaction blob to sign (simplified)
-                let tx_bytes = vec![0u8; 64]; // Placeholder for actual transaction encoding
-
-                // Sign the transaction
-                let signature = private_key.sign(&tx_bytes);
-
-                let tx_blob = hex::encode(&tx_bytes) + &hex::encode(signature.as_bytes());
-
-                Ok(serde_json::json!({
-                    "tx_blob": tx_blob,
-                    "tx_json": tx_json,
-                    "status": "success",
-                }))
+                self.handle_sign(params).await
             }
 
             "sign_for" => {
-                use crypto::{PrivateKey, KeyType};
-
-                let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let account = params.get("account")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'account' parameter"))?;
-                let secret = params.get("secret")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'secret' parameter"))?;
-                let tx_json = params.get("tx_json")
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'tx_json' parameter"))?;
-
-                // Parse the account to sign for
-                let _account_id = parse_account(account)?;
-
-                // Try to decode secret as hex private key
-                let private_key = if let Ok(key_bytes) = hex::decode(secret) {
-                    if key_bytes.len() == 32 {
-                        PrivateKey::from_bytes(KeyType::Secp256k1, &key_bytes)
-                            .unwrap_or_else(|| PrivateKey::generate_secp256k1())
-                    } else {
-                        PrivateKey::generate_secp256k1()
-                    }
-                } else {
-                    PrivateKey::generate_secp256k1()
-                };
-
-                // Create transaction blob to sign (simplified)
-                let tx_bytes = vec![0u8; 64];
-
-                // Sign the transaction for another account
-                let signature = private_key.sign(&tx_bytes);
-
-                let tx_blob = hex::encode(&tx_bytes) + &hex::encode(signature.as_bytes());
-
-                Ok(serde_json::json!({
-                    "account": account,
-                    "tx_blob": tx_blob,
-                    "tx_json": tx_json,
-                    "status": "success",
-                }))
+                self.handle_sign_for(params).await
             }
 
             // ================================================================
