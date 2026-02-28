@@ -6,7 +6,7 @@ pub mod round;
 pub mod types;
 
 pub use amendment::{Amendment, AmendmentStatus, AmendmentTable, VoteSummary};
-pub use consensus::{Consensus, ConsensusState};
+pub use consensus::{Consensus, ConsensusState, ValidatorInfo};
 pub use fee_vote::{FeeVote, FeeVoting};
 pub use params::ConsensusParms;
 pub use round::{ConsensusRound, ConsensusRoundManager};

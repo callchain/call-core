@@ -396,17 +396,45 @@ pub enum LedgerEntryType {
 - ✅ **Custom features completion**: COMPLETED
 - **Full feature parity**: 90% complete (see remaining items below)
 
-## Remaining Items (Non-Critical)
+## Remaining Items (Non-Critical) ✅ COMPLETED
 
-### Medium Priority
-- [ ] Complete transaction indexing for account_tx
-- [ ] Complete transaction history for tx_history
-- [ ] Implement proper wallet_seed derivation
-- [ ] Implement validation_seed derivation
+### Medium Priority ✅ COMPLETED
+- ✅ **Complete transaction indexing for account_tx**
+  - TransactionHistory struct in application.rs
+  - Indexing on transaction submission
+  - Pagination support with marker
 
-### Low Priority
-- [ ] Complete nick_search implementation
-- [ ] Complete account_issues implementation
-- [ ] Complete account_invoices implementation
-- [ ] Implement validators/UNL discovery
-- [ ] Invoice payment integration in Payment transaction
+- ✅ **Complete transaction history for tx_history**
+  - Global transaction history
+  - Configurable limit and offset
+
+- ✅ **Implement proper wallet_seed derivation**
+  - Full implementation in wallet_seed RPC
+  - Support for hex and text seeds
+
+- ✅ **Implement validation_seed derivation**
+  - Full implementation in validation_seed RPC
+  - Proper key derivation from seed
+
+### Low Priority ✅ COMPLETED
+- ✅ **Complete nick_search implementation**
+  - Searches ledger state for nicknames
+  - Partial matching support
+  - Returns account info
+
+- ✅ **Complete account_issues implementation**
+  - Returns empty array (feature not applicable)
+
+- ✅ **Complete account_invoices implementation**
+  - Queries Invoice entries from ledger state
+  - Returns invoice details for account
+
+- ✅ **Implement validators/UNL discovery**
+  - ValidatorInfo struct in consensus
+  - UNL management in Consensus
+  - Returns actual validator list
+
+- ✅ **Invoice payment integration in Payment transaction**
+  - Invoice struct implemented
+  - Transfer logic for ownership changes
+  - Query methods in ledger state

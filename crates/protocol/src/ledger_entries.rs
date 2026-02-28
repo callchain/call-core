@@ -893,6 +893,19 @@ impl LedgerState {
         results
     }
 
+    /// Get all invoices for an account (where account is issuer or owner)
+    pub fn get_invoices_for_account(&self, account: &AccountID) -> Vec<Invoice> {
+        let mut results = Vec::new();
+        for item in self.state_map.iter() {
+            if let Some(invoice) = Self::deserialize_invoice(item.data()) {
+                if invoice.issuer == *account || invoice.owner == *account {
+                    results.push(invoice);
+                }
+            }
+        }
+        results
+    }
+
     /// Get all directory nodes for an account
     pub fn get_directories_for_account(&self, account: &AccountID) -> Vec<DirectoryNode> {
         let mut results = Vec::new();
@@ -1113,6 +1126,33 @@ impl LedgerState {
             nickname,
             account,
             min_offer,
+            previous_txn_id: primitives::UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        })
+    }
+
+    fn deserialize_invoice(data: &[u8]) -> Option<Invoice> {
+        use serialization::SerialIter;
+        let mut iter = SerialIter::new(data);
+
+        // Try to deserialize as an Invoice
+        // Format: invoice_id (32 bytes), issuer (20 bytes), owner (20 bytes), amount, flags
+        let invoice_id = iter.get256().ok()?;
+        let issuer = iter.get_account().ok()?;
+        let owner = iter.get_account().ok()?;
+        let amount = iter.get_amount().ok()?;
+        let flags = iter.get32().ok()?;
+
+        // Try to read optional data
+        let data = iter.get_vl().unwrap_or_default();
+
+        Some(Invoice {
+            invoice_id,
+            issuer,
+            owner,
+            amount,
+            data,
+            flags,
             previous_txn_id: primitives::UInt256::zero(),
             previous_txn_lgr_seq: 0,
         })

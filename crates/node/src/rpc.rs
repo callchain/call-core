@@ -382,7 +382,7 @@ impl RpcHandler for AppRpcHandler {
                     .and_then(|v| v.as_str())
                     .ok_or(JsonRpcError::invalid_params())?;
 
-                let _account_id = parse_account(account)?;
+                let account_id = parse_account(account)?;
                 let ledger_index_min = params.get("ledger_index_min")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(-1) as u32;
@@ -395,9 +395,11 @@ impl RpcHandler for AppRpcHandler {
                 let forward = params.get("forward")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let offset = params.get("offset")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
 
                 // Get ledger state for account root
-                let _ledger_state = app.get_ledger_state();
                 let current_ledger = app.consensus.get_ledger_index();
 
                 // Determine effective ledger range
@@ -412,12 +414,52 @@ impl RpcHandler for AppRpcHandler {
                     ledger_index_max
                 };
 
-                // Search transaction nodes for ones involving this account
-                // In a full implementation, this would use a transaction index database
-                let transactions: Vec<serde_json::Value> = Vec::new();
+                // Get transactions from transaction history
+                let tx_history = app.get_tx_history();
+                let tx_records = tx_history.get_account_transactions(
+                    &account_id,
+                    min_ledger,
+                    max_ledger,
+                    limit,
+                    offset,
+                );
+
+                let transactions: Vec<serde_json::Value> = tx_records
+                    .into_iter()
+                    .map(|record| {
+                        serde_json::json!({
+                            "tx": {
+                                "hash": hex::encode(record.tx_hash.as_bytes()),
+                                "TransactionType": format!("{:?}", record.tx_type),
+                                "ledger_index": record.ledger_seq,
+                                "date": record.timestamp,
+                            },
+                            "meta": {
+                                "TransactionIndex": 0,
+                                "TransactionResult": "tesSUCCESS",
+                            },
+                            "validated": false,
+                        })
+                    })
+                    .collect();
+
+                // Reverse if forward is true (we store newest first)
+                let transactions = if forward {
+                    transactions.into_iter().rev().collect()
+                } else {
+                    transactions
+                };
+
+                // Get total count for pagination info
+                let total_count = tx_history.count_account_transactions(&account_id, min_ledger, max_ledger);
+                let marker = if offset + transactions.len() < total_count {
+                    Some(offset + transactions.len())
+                } else {
+                    None
+                };
 
                 // Return proper response with account info
-                Ok(serde_json::json!({
+                let mut response = serde_json::json!({
                     "account": account,
                     "ledger_index_min": min_ledger as i64,
                     "ledger_index_max": max_ledger as i64,
@@ -426,7 +468,13 @@ impl RpcHandler for AppRpcHandler {
                     "transactions": transactions,
                     "validated": false,
                     "status": "success",
-                }))
+                });
+
+                if let Some(marker) = marker {
+                    response["marker"] = serde_json::json!(marker);
+                }
+
+                Ok(response)
             }
 
             "account_lines" => {
@@ -958,24 +1006,29 @@ impl RpcHandler for AppRpcHandler {
                 let start = params
                     .and_then(|p| p.get("start"))
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                    .unwrap_or(0) as usize;
 
-                let limit = 50u64;
+                let limit = 50usize;
                 let current_ledger = app.consensus.get_ledger_index();
 
-                // Query transaction history from stored transaction nodes
-                // In a full implementation, this would use a transaction index database
-                // that maps ledger sequences to transaction hashes
+                // Get global transaction history
+                let tx_history = app.get_tx_history();
+                let records = tx_history.get_tx_history(start, limit);
 
-                // For now, return empty array with proper pagination info
-                // A full implementation would:
-                // 1. Query transaction index by ledger sequence
-                // 2. Start from the 'start' offset
-                // 3. Return up to 'limit' transactions
-                // 4. Include ledger_hash, ledger_index, tx blob, and metadata
+                let transactions: Vec<serde_json::Value> = records
+                    .into_iter()
+                    .map(|record| {
+                        serde_json::json!({
+                            "hash": hex::encode(record.tx_hash.as_bytes()),
+                            "TransactionType": format!("{:?}", record.tx_type),
+                            "ledger_index": record.ledger_seq,
+                            "date": record.timestamp,
+                        })
+                    })
+                    .collect();
 
                 Ok(serde_json::json!({
-                    "transactions": [],
+                    "transactions": transactions,
                     "start": start,
                     "limit": limit,
                     "ledger_index_min": 1,
@@ -1375,7 +1428,18 @@ impl RpcHandler for AppRpcHandler {
                 let ledger_index = app.consensus.get_ledger_index();
 
                 // Get validator information from consensus
-                let validator_list: Vec<serde_json::Value> = vec![];
+                let validators = app.consensus.get_validators();
+                let validator_list: Vec<serde_json::Value> = validators
+                    .iter()
+                    .map(|v| {
+                        serde_json::json!({
+                            "validation_public_key": hex::encode(v.node_id.as_bytes()),
+                            "domain": v.domain.as_deref().unwrap_or(""),
+                            "name": v.name.as_deref().unwrap_or(""),
+                            "trusted": v.trusted,
+                        })
+                    })
+                    .collect();
 
                 Ok(serde_json::json!({
                     "validators": validator_list,
@@ -2107,20 +2171,45 @@ impl RpcHandler for AppRpcHandler {
                 let nick = params.get("nick")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| JsonRpcError::new(31, "Missing 'nick' parameter"))?;
+                let limit = params.get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10) as usize;
 
                 let app = self.app.read().await;
                 let ledger_state = app.get_ledger_state();
 
                 // Search for nickname in ledger state
-                let accounts: Vec<serde_json::Value> = Vec::new();
+                let mut accounts: Vec<serde_json::Value> = Vec::new();
 
-                // In a real implementation, this would search the nickname database
-                // For now, return empty results with proper structure
-                let _ = (nick, ledger_state);
+                // Try to get nickname entry from ledger state
+                if let Some(nick_entry) = ledger_state.get_nickname(nick.as_bytes()) {
+                    accounts.push(serde_json::json!({
+                        "account": hex::encode(nick_entry.account.as_bytes()),
+                        "nickname": String::from_utf8_lossy(&nick_entry.nickname).to_string(),
+                        "min_offer": nick_entry.min_offer.as_ref().map(|a| a.mantissa.to_string()),
+                    }));
+                }
+
+                // Also search for partial matches (simplified)
+                // In a full implementation, this would use a proper index
+                let nick_lower = nick.to_lowercase();
+                for item in ledger_state.iter().take(limit * 10) {
+                    if let Some(nick_entry) = ledger_state.get_nickname(item.data()) {
+                        let entry_nick = String::from_utf8_lossy(&nick_entry.nickname).to_lowercase();
+                        if entry_nick.contains(&nick_lower) && accounts.len() < limit {
+                            accounts.push(serde_json::json!({
+                                "account": hex::encode(nick_entry.account.as_bytes()),
+                                "nickname": String::from_utf8_lossy(&nick_entry.nickname).to_string(),
+                                "min_offer": nick_entry.min_offer.as_ref().map(|a| a.mantissa.to_string()),
+                            }));
+                        }
+                    }
+                }
 
                 Ok(serde_json::json!({
                     "accounts": accounts,
                     "nick_searched": nick,
+                    "total": accounts.len(),
                     "status": "success",
                 }))
             }
@@ -2150,17 +2239,37 @@ impl RpcHandler for AppRpcHandler {
                 let account = params.get("account")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| JsonRpcError::new(31, "Missing 'account'"))?;
+                let limit = params.get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(50) as usize;
 
-                let _account_id = parse_account(account)?;
-                let _app = self.app.read().await;
+                let account_id = parse_account(account)?;
+                let app = self.app.read().await;
 
-                // Get invoices for account
-                // In a real implementation, this would query the invoices database
-                let invoices: Vec<serde_json::Value> = Vec::new();
+                // Get invoices for account from ledger state
+                let ledger_state = app.get_ledger_state();
+                let invoices_data = ledger_state.get_invoices_for_account(&account_id);
+
+                let invoices: Vec<serde_json::Value> = invoices_data
+                    .into_iter()
+                    .take(limit)
+                    .map(|invoice| {
+                        serde_json::json!({
+                            "invoice_id": hex::encode(invoice.invoice_id.as_bytes()),
+                            "issuer": hex::encode(invoice.issuer.as_bytes()),
+                            "owner": hex::encode(invoice.owner.as_bytes()),
+                            "amount": invoice.amount.mantissa.to_string(),
+                            "currency": hex::encode(invoice.amount.get_currency().as_bytes()),
+                            "flags": invoice.flags,
+                            "data": hex::encode(&invoice.data),
+                        })
+                    })
+                    .collect();
 
                 Ok(serde_json::json!({
                     "account": account,
                     "invoices": invoices,
+                    "total": invoices.len(),
                     "status": "success",
                 }))
             }

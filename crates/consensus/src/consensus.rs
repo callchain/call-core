@@ -65,6 +65,16 @@ impl ConsensusState {
 }
 
 /// Main consensus manager
+/// Validator info for UNL
+#[derive(Debug, Clone)]
+pub struct ValidatorInfo {
+    pub node_id: NodeID,
+    pub public_key: Vec<u8>,
+    pub domain: Option<String>,
+    pub name: Option<String>,
+    pub trusted: bool,
+}
+
 pub struct Consensus {
     params: ConsensusParms,
     mode: ConsensusMode,
@@ -74,11 +84,13 @@ pub struct Consensus {
     validations: HashMap<UInt256, Vec<Validation>>,
     ledger_index: LedgerIndex,
     round_id: u64,
+    /// Unique Node List - trusted validators
+    unl: Vec<ValidatorInfo>,
 }
 
 impl Consensus {
     pub fn new(node_id: NodeID, params: ConsensusParms) -> Self {
-        Self {
+        let mut consensus = Self {
             params,
             mode: ConsensusMode::Observing,
             phase: ConsensusPhase::Open,
@@ -87,7 +99,46 @@ impl Consensus {
             validations: HashMap::new(),
             ledger_index: 0,
             round_id: 0,
+            unl: Vec::new(),
+        };
+
+        // Add self as a validator
+        consensus.add_validator(node_id, Vec::new(), None, None, true);
+
+        consensus
+    }
+
+    /// Add a validator to the UNL
+    pub fn add_validator(
+        &mut self,
+        node_id: NodeID,
+        public_key: Vec<u8>,
+        domain: Option<String>,
+        name: Option<String>,
+        trusted: bool,
+    ) {
+        // Check if validator already exists
+        if self.unl.iter().any(|v| v.node_id == node_id) {
+            return;
         }
+
+        self.unl.push(ValidatorInfo {
+            node_id,
+            public_key,
+            domain,
+            name,
+            trusted,
+        });
+    }
+
+    /// Get the list of validators
+    pub fn get_validators(&self) -> &[ValidatorInfo] {
+        &self.unl
+    }
+
+    /// Get the count of trusted validators
+    pub fn get_trusted_validator_count(&self) -> usize {
+        self.unl.iter().filter(|v| v.trusted).count()
     }
 
     pub fn with_mode(mut self, mode: ConsensusMode) -> Self {

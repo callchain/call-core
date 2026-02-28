@@ -2,12 +2,87 @@ use crate::config::Config;
 use crate::rpc::{RpcConfig, RpcServer, SimpleRpcHandler};
 use consensus::{Consensus, ConsensusParms, ConsensusMode, ConsensusPhase};
 use network::Overlay;
-use primitives::NodeID;
+use primitives::{AccountID, NodeID, UInt256};
 use storage::Database;
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::{RwLock, watch};
 use tokio::task::JoinHandle;
 use tracing::{info, debug, warn};
+
+/// Transaction record for account history
+#[derive(Debug, Clone)]
+pub struct AccountTxRecord {
+    pub tx_hash: UInt256,
+    pub ledger_seq: u32,
+    pub timestamp: u64,
+    pub tx_type: protocol::TxType,
+}
+
+/// Transaction history manager for account_tx and tx_history
+#[derive(Debug, Default)]
+pub struct TransactionHistory {
+    /// Account -> List of transactions (sorted by ledger seq descending)
+    by_account: HashMap<AccountID, Vec<AccountTxRecord>>,
+    /// Global transaction history (for tx_history)
+    global: Vec<AccountTxRecord>,
+}
+
+impl TransactionHistory {
+    pub fn new() -> Self {
+        Self {
+            by_account: HashMap::new(),
+            global: Vec::new(),
+        }
+    }
+
+    /// Index a transaction for an account
+    pub fn index_transaction(&mut self, account: AccountID, record: AccountTxRecord) {
+        let entries = self.by_account.entry(account).or_default();
+        // Insert in sorted order (newest first)
+        let pos = entries.binary_search_by(|e| e.ledger_seq.cmp(&record.ledger_seq).reverse())
+            .unwrap_or_else(|e| e);
+        entries.insert(pos, record.clone());
+
+        // Also add to global history
+        let pos = self.global.binary_search_by(|e| e.ledger_seq.cmp(&record.ledger_seq).reverse())
+            .unwrap_or_else(|e| e);
+        self.global.insert(pos, record);
+    }
+
+    /// Get transactions for an account with pagination
+    pub fn get_account_transactions(
+        &self,
+        account: &AccountID,
+        ledger_min: u32,
+        ledger_max: u32,
+        limit: usize,
+        offset: usize,
+    ) -> Vec<&AccountTxRecord> {
+        let entries = self.by_account.get(account);
+        let filtered: Vec<_> = entries
+            .into_iter()
+            .flat_map(|v| v.iter())
+            .filter(|e| e.ledger_seq >= ledger_min && e.ledger_seq <= ledger_max)
+            .skip(offset)
+            .take(limit)
+            .collect();
+        filtered
+    }
+
+    /// Get global transaction history
+    pub fn get_tx_history(&self, start: usize, limit: usize) -> Vec<&AccountTxRecord> {
+        self.global.iter().skip(start).take(limit).collect()
+    }
+
+    /// Count transactions for an account in ledger range
+    pub fn count_account_transactions(&self, account: &AccountID, ledger_min: u32, ledger_max: u32) -> usize {
+        self.by_account
+            .get(account)
+            .map(|entries| entries.iter().filter(|e| e.ledger_seq >= ledger_min && e.ledger_seq <= ledger_max).count())
+            .unwrap_or(0)
+    }
+}
 
 /// Node state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +114,8 @@ pub struct Application {
     ledger_state: protocol::LedgerState,
     /// Transaction queue for pending transactions
     tx_queue: protocol::TransactionQueue,
+    /// Transaction history for account_tx and tx_history
+    tx_history: TransactionHistory,
 }
 
 impl Application {
@@ -86,6 +163,9 @@ impl Application {
         // Initialize transaction queue (max 10000 pending transactions)
         let tx_queue = protocol::TransactionQueue::new(10000);
 
+        // Initialize transaction history
+        let tx_history = TransactionHistory::new();
+
         info!("Application initialized with node_id: {:?}", node_id);
 
         Ok(Self {
@@ -103,6 +183,7 @@ impl Application {
             current_ledger_seq: 0,
             ledger_state,
             tx_queue,
+            tx_history,
         })
     }
 
@@ -135,6 +216,38 @@ impl Application {
     /// Get the ledger state (mutable)
     pub fn get_ledger_state_mut(&mut self) -> &mut protocol::LedgerState {
         &mut self.ledger_state
+    }
+
+    /// Get the transaction history
+    pub fn get_tx_history(&self) -> &TransactionHistory {
+        &self.tx_history
+    }
+
+    /// Get the transaction history (mutable)
+    pub fn get_tx_history_mut(&mut self) -> &mut TransactionHistory {
+        &mut self.tx_history
+    }
+
+    /// Index a transaction for account history
+    pub fn index_transaction(
+        &mut self,
+        account: AccountID,
+        tx_hash: UInt256,
+        tx_type: protocol::TxType,
+    ) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let record = AccountTxRecord {
+            tx_hash,
+            ledger_seq: self.current_ledger_seq,
+            timestamp,
+            tx_type,
+        };
+        self.tx_history.index_transaction(account, record);
     }
 
     /// Start the application
