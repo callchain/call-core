@@ -6,6 +6,6 @@ pub mod wallet;
 
 pub use base58::{encode, decode, encode_check, decode_check, CALLCHAIN_ALPHABET};
 pub use hash::{sha256, sha512_half, HashPrefix};
-pub use keys::{KeyType, PrivateKey, PublicKey};
+pub use keys::{KeyType, PrivateKey, PublicKey, generate_account_id};
 pub use signature::Signature;
-pub use wallet::{Wallet, generate_seed, validate_address, validate_seed_format};
+pub use wallet::{Wallet, Seed, generate_seed, validate_address, validate_seed_format};

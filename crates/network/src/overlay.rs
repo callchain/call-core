@@ -7,6 +7,64 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+/// Peer slot type for reservation system
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerSlotType {
+    /// Regular peer slot
+    Regular,
+    /// Reserved for cluster node
+    Cluster,
+    /// Reserved for specific peer
+    Reserved,
+}
+
+/// Cluster node configuration
+#[derive(Debug, Clone)]
+pub struct ClusterNode {
+    /// Node ID of the cluster peer
+    pub node_id: NodeID,
+    /// Fixed address (optional - can use discovery)
+    pub fixed_address: Option<SocketAddr>,
+    /// Whether this node is a hub in the cluster
+    pub is_hub: bool,
+}
+
+impl ClusterNode {
+    pub fn new(node_id: NodeID) -> Self {
+        Self {
+            node_id,
+            fixed_address: None,
+            is_hub: false,
+        }
+    }
+
+    pub fn with_address(node_id: NodeID, address: SocketAddr) -> Self {
+        Self {
+            node_id,
+            fixed_address: Some(address),
+            is_hub: false,
+        }
+    }
+
+    pub fn as_hub(mut self) -> Self {
+        self.is_hub = true;
+        self
+    }
+}
+
+/// Reserved peer slot
+#[derive(Debug, Clone)]
+pub struct ReservedSlot {
+    /// The slot type
+    pub slot_type: PeerSlotType,
+    /// Expected node ID (if known)
+    pub expected_node_id: Option<NodeID>,
+    /// Expected address (if fixed)
+    pub expected_address: Option<SocketAddr>,
+    /// Whether this slot is currently filled
+    pub is_filled: bool,
+}
+
 /// Overlay network manager
 #[allow(dead_code)]
 pub struct Overlay {
@@ -15,6 +73,16 @@ pub struct Overlay {
     pending_peers: Vec<SocketAddr>,
     max_peers: usize,
     target_peers: usize,
+    /// Cluster nodes configuration
+    cluster_nodes: HashMap<NodeID, ClusterNode>,
+    /// Reserved peer slots
+    reserved_slots: Vec<ReservedSlot>,
+    /// Number of slots reserved for cluster nodes
+    cluster_slot_count: usize,
+    /// Enable proof of work for incoming connections
+    pub require_pow: bool,
+    /// PoW validator for incoming connections
+    pow_validator: Option<crate::proof_of_work::PowValidator>,
 }
 
 impl Overlay {
@@ -25,6 +93,11 @@ impl Overlay {
             pending_peers: Vec::new(),
             max_peers: 50,
             target_peers: 10,
+            cluster_nodes: HashMap::new(),
+            reserved_slots: Vec::new(),
+            cluster_slot_count: 0,
+            require_pow: false,
+            pow_validator: None,
         }
     }
 
@@ -35,6 +108,111 @@ impl Overlay {
             pending_peers: Vec::new(),
             max_peers,
             target_peers,
+            cluster_nodes: HashMap::new(),
+            reserved_slots: Vec::new(),
+            cluster_slot_count: 0,
+            require_pow: false,
+            pow_validator: None,
+        }
+    }
+
+    /// Enable proof of work for incoming connections
+    pub fn enable_pow(mut self, difficulty: u8) -> Self {
+        self.require_pow = true;
+        self.pow_validator = Some(crate::proof_of_work::PowValidator::with_difficulty(difficulty));
+        self
+    }
+
+    /// Check if proof of work is required
+    pub fn is_pow_required(&self) -> bool {
+        self.require_pow
+    }
+
+    /// Get PoW validator if enabled
+    pub fn pow_validator(&self) -> Option<&crate::proof_of_work::PowValidator> {
+        self.pow_validator.as_ref()
+    }
+
+    /// Add a cluster node
+    pub fn add_cluster_node(&mut self, node: ClusterNode) {
+        // Reserve a slot if not already reserved
+        if !self.cluster_nodes.contains_key(&node.node_id) {
+            self.cluster_slot_count += 1;
+            self.reserved_slots.push(ReservedSlot {
+                slot_type: PeerSlotType::Cluster,
+                expected_node_id: Some(node.node_id),
+                expected_address: node.fixed_address,
+                is_filled: false,
+            });
+        }
+        self.cluster_nodes.insert(node.node_id, node);
+    }
+
+    /// Remove a cluster node
+    pub fn remove_cluster_node(&mut self, node_id: &NodeID) {
+        if self.cluster_nodes.remove(node_id).is_some() {
+            // Free the reserved slot
+            if let Some(pos) = self.reserved_slots.iter().position(|s| {
+                s.slot_type == PeerSlotType::Cluster && s.expected_node_id == Some(*node_id)
+            }) {
+                self.reserved_slots.remove(pos);
+                self.cluster_slot_count = self.cluster_slot_count.saturating_sub(1);
+            }
+        }
+    }
+
+    /// Check if a node ID is a configured cluster node
+    pub fn is_cluster_node(&self, node_id: &NodeID) -> bool {
+        self.cluster_nodes.contains_key(node_id)
+    }
+
+    /// Get all cluster nodes
+    pub fn cluster_nodes(&self) -> &HashMap<NodeID, ClusterNode> {
+        &self.cluster_nodes
+    }
+
+    /// Reserve a peer slot
+    pub fn reserve_slot(&mut self, node_id: Option<NodeID>, address: Option<SocketAddr>) {
+        self.reserved_slots.push(ReservedSlot {
+            slot_type: PeerSlotType::Reserved,
+            expected_node_id: node_id,
+            expected_address: address,
+            is_filled: false,
+        });
+    }
+
+    /// Get number of reserved slots
+    pub fn reserved_slot_count(&self) -> usize {
+        self.reserved_slots.len()
+    }
+
+    /// Get number of available regular slots
+    pub fn available_regular_slots(&self) -> usize {
+        let used_regular = self.peers.values().filter(|p| {
+            !p.node_id.map_or(false, |id| self.is_cluster_node(&id))
+        }).count();
+        self.max_peers.saturating_sub(self.cluster_slot_count).saturating_sub(used_regular)
+    }
+
+    /// Check if an incoming connection matches a reserved slot
+    pub fn matches_reserved_slot(&self, addr: SocketAddr, node_id: Option<NodeID>) -> bool {
+        self.reserved_slots.iter().any(|slot| {
+            !slot.is_filled && (
+                (slot.expected_address == Some(addr)) ||
+                (node_id.is_some() && slot.expected_node_id == node_id)
+            )
+        })
+    }
+
+    /// Mark a reserved slot as filled
+    pub fn fill_reserved_slot(&mut self, addr: SocketAddr, node_id: NodeID) {
+        if let Some(slot) = self.reserved_slots.iter_mut().find(|s| {
+            !s.is_filled && (
+                (s.expected_address == Some(addr)) ||
+                (s.expected_node_id == Some(node_id))
+            )
+        }) {
+            slot.is_filled = true;
         }
     }
 

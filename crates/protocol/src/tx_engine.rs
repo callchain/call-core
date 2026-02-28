@@ -342,6 +342,14 @@ impl TransactionEngine {
             }
         };
 
+        // Check deposit authorization
+        // If the recipient has LSF_DEPOSIT_AUTH set, they must pre-authorize incoming payments
+        // For now, we reject all incoming payments to accounts with deposit auth enabled
+        // TODO: Implement pre-authorized depositors list
+        if recipient.requires_deposit_auth() && destination != sender.account {
+            return TER::tecNO_PERMISSION;
+        }
+
         // Add to recipient
         recipient.balance.mantissa = recipient.balance.mantissa.saturating_add(amount_val);
 
@@ -425,6 +433,22 @@ impl TransactionEngine {
 
         // Update limit
         call_state.limit = limit;
+
+        // Update quality settings if provided (in basis points, 1/100 of 1%)
+        // 0 = no quality set (default)
+        // 1000000000 = 1.0 (100% quality, meaning no markup/discount)
+        // > 1000000000 = premium (pay more to receive)
+        // < 1000000000 = discount (pay less to receive)
+        if let Some(quality_in) = tx.quality_in {
+            // QualityIn: how much the account values incoming IOUs
+            // Higher = account values IOUs more (willing to pay more CALL for them)
+            call_state.quality_in = Some(quality_in);
+        }
+        if let Some(quality_out) = tx.quality_out {
+            // QualityOut: how much the account values their own outgoing IOUs
+            // Higher = others must pay more CALL to receive these IOUs
+            call_state.quality_out = Some(quality_out);
+        }
 
         ctx.ledger.set_call_state(&call_state);
 
@@ -558,6 +582,8 @@ impl TransactionEngine {
         account: &mut AccountRoot,
         _result: &mut TxResult,
     ) -> TER {
+        use crate::ledger_entries::{account_flags, account_set_flags};
+
         // Update domain if provided
         if let Some(domain) = &tx.domain {
             account.domain = Some(domain.clone());
@@ -581,6 +607,44 @@ impl TransactionEngine {
         // Update tick size if provided
         if let Some(tick_size) = tx.tick_size {
             account.tick_size = Some(tick_size);
+        }
+
+        // Process SetFlag field
+        if let Some(set_flag) = tx.set_flag {
+            let flag_to_set = match set_flag {
+                account_set_flags::ASF_REQUIRE_DEST_TAG => Some(account_flags::LSF_REQUIRE_DEST_TAG),
+                account_set_flags::ASF_REQUIRE_AUTH => Some(account_flags::LSF_REQUIRE_AUTH),
+                account_set_flags::ASF_DISALLOW_CALL => Some(account_flags::LSF_DISALLOW_CALL),
+                account_set_flags::ASF_DISABLE_MASTER => Some(account_flags::LSF_DISABLE_MASTER),
+                account_set_flags::ASF_NO_FREEZE => Some(account_flags::LSF_NO_FREEZE),
+                account_set_flags::ASF_GLOBAL_FREEZE => Some(account_flags::LSF_GLOBAL_FREEZE),
+                account_set_flags::ASF_DEFAULT_CALL => Some(account_flags::LSF_DEFAULT_CALL),
+                account_set_flags::ASF_DEPOSIT_AUTH => Some(account_flags::LSF_DEPOSIT_AUTH),
+                _ => None,
+            };
+
+            if let Some(flag) = flag_to_set {
+                account.set_flag(flag);
+            }
+        }
+
+        // Process ClearFlag field
+        if let Some(clear_flag) = tx.clear_flag {
+            let flag_to_clear = match clear_flag {
+                account_set_flags::ASF_REQUIRE_DEST_TAG => Some(account_flags::LSF_REQUIRE_DEST_TAG),
+                account_set_flags::ASF_REQUIRE_AUTH => Some(account_flags::LSF_REQUIRE_AUTH),
+                account_set_flags::ASF_DISALLOW_CALL => Some(account_flags::LSF_DISALLOW_CALL),
+                account_set_flags::ASF_DISABLE_MASTER => Some(account_flags::LSF_DISABLE_MASTER),
+                account_set_flags::ASF_NO_FREEZE => Some(account_flags::LSF_NO_FREEZE),
+                account_set_flags::ASF_GLOBAL_FREEZE => Some(account_flags::LSF_GLOBAL_FREEZE),
+                account_set_flags::ASF_DEFAULT_CALL => Some(account_flags::LSF_DEFAULT_CALL),
+                account_set_flags::ASF_DEPOSIT_AUTH => Some(account_flags::LSF_DEPOSIT_AUTH),
+                _ => None,
+            };
+
+            if let Some(flag) = flag_to_clear {
+                account.clear_flag(flag);
+            }
         }
 
         TER::tesSUCCESS

@@ -17,6 +17,60 @@ use rand::rngs::OsRng;
 use sha2::{Sha256, Digest};
 use ripemd::Ripemd160;
 
+/// A seed for deterministic key generation
+#[derive(Debug, Clone)]
+pub struct Seed {
+    entropy: [u8; 16],
+}
+
+impl Seed {
+    /// Generate a new random seed
+    pub fn generate() -> Self {
+        let mut entropy = [0u8; 16];
+        OsRng.fill_bytes(&mut entropy);
+        Self { entropy }
+    }
+
+    /// Create seed from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != 16 {
+            return None;
+        }
+        let mut entropy = [0u8; 16];
+        entropy.copy_from_slice(bytes);
+        Some(Self { entropy })
+    }
+
+    /// Create seed from passphrase (deterministic)
+    pub fn from_passphrase(passphrase: &str) -> Self {
+        let hash = sha256(passphrase.as_bytes());
+        let mut entropy = [0u8; 16];
+        entropy.copy_from_slice(&hash[..16]);
+        Self { entropy }
+    }
+
+    /// Get seed as bytes
+    pub fn to_bytes(&self) -> [u8; 16] {
+        self.entropy
+    }
+
+    /// Derive private key from seed
+    pub fn derive_private_key(&self) -> PrivateKey {
+        // Hash with SHA256 to get 32 bytes for private key
+        let mut hasher = Sha256::new();
+        hasher.update(&self.entropy);
+        let key_hash: [u8; 32] = hasher.finalize().into();
+
+        PrivateKey::from_bytes(KeyType::Secp256k1, &key_hash)
+            .expect("Valid private key from 32 bytes")
+    }
+
+    /// Get the seed string (base58 encoded)
+    pub fn to_string(&self) -> String {
+        encode_seed(&self.entropy)
+    }
+}
+
 /// Version byte for Callchain addresses (produces 'c' prefix)
 pub const ADDRESS_VERSION: u8 = 0x00;
 

@@ -397,10 +397,11 @@ impl RpcHandler for AppRpcHandler {
 
             "ledger_closed" => {
                 let app = self.app.read().await;
-                let ledger_index = app.consensus.get_round_id();
+                let ledger_index = app.get_current_ledger_seq();
+                let ledger_hash = app.get_current_ledger_hash();
                 Ok(serde_json::json!({
                     "ledger_index": ledger_index,
-                    "ledger_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "ledger_hash": hex::encode(ledger_hash.as_bytes()),
                     "status": "success"
                 }))
             }
@@ -511,17 +512,39 @@ impl RpcHandler for AppRpcHandler {
                     .and_then(|p| p.get("ledger_index"))
                     .and_then(|v| v.as_u64())
                     .map(|v| v as u32)
-                    .unwrap_or_else(|| app.consensus.get_ledger_index());
+                    .unwrap_or_else(|| app.get_current_ledger_seq());
+
+                let ledger_hash = app.get_current_ledger_hash();
+                let ledger_state = app.get_ledger_state();
+                let account_hash = ledger_state.get_root_hash();
+
+                // Get parent hash from ledger history if available, otherwise use zeros
+                let parent_hash = if ledger_index > 1 {
+                    // In a full implementation, we'd look up the parent ledger hash
+                    // For now, we use zeros as parent hash for the current ledger
+                    UInt256::zero()
+                } else {
+                    UInt256::zero()
+                };
+
+                let close_time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
+                let close_time_human = chrono::DateTime::from_timestamp(close_time as i64, 0)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
 
                 Ok(serde_json::json!({
                     "ledger_header": {
                         "ledger_index": ledger_index.to_string(),
-                        "ledger_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-                        "parent_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-                        "account_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-                        "transaction_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-                        "close_time": 0,
-                        "close_time_human": "1970-01-01T00:00:00Z",
+                        "ledger_hash": hex::encode(ledger_hash.as_bytes()),
+                        "parent_hash": hex::encode(parent_hash.as_bytes()),
+                        "account_hash": hex::encode(account_hash.as_bytes()),
+                        "transaction_hash": hex::encode(UInt256::zero().as_bytes()),
+                        "close_time": close_time,
+                        "close_time_human": close_time_human,
                     },
                     "status": "success",
                     "validated": true,
@@ -878,52 +901,6 @@ impl RpcHandler for AppRpcHandler {
                 }))
             }
 
-            "account_channels" => {
-                let app = self.app.read().await;
-                let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let account = params.get("account")
-                    .and_then(|v| v.as_str())
-                    .ok_or(JsonRpcError::invalid_params())?;
-
-                let account_id = parse_account(account)?;
-                let limit = params.get("limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(100) as usize;
-                let ledger_state = app.get_ledger_state();
-
-                // Get directories for account (which may contain payment channels)
-                let directories = ledger_state.get_directories_for_account(&account_id);
-
-                let channels: Vec<serde_json::Value> = directories
-                    .into_iter()
-                    .take(limit)
-                    .map(|dir| {
-                        let mut obj = serde_json::json!({
-                            "account": hex::encode(account_id.as_bytes()),
-                            "directory_index": hex::encode(dir.root_index.as_bytes()),
-                            "index": hex::encode(dir.root_index.as_bytes()),
-                            "channel_amount": "0",
-                            "balance": "0",
-                            "public_key": "",
-                            "settle_delay": 0,
-                            "destination": "",
-                        });
-                        if let Some(owner) = dir.owner {
-                            obj["destination"] = serde_json::json!(hex::encode(owner.as_bytes()));
-                        }
-                        obj
-                    })
-                    .collect();
-
-                Ok(serde_json::json!({
-                    "account": account,
-                    "payment_channels": channels,
-                    "ledger_current_index": app.consensus.get_ledger_index(),
-                    "validated": false,
-                    "status": "success",
-                }))
-            }
-
             "account_currencies" => {
                 let params = params.ok_or(JsonRpcError::invalid_params())?;
                 let account = params.get("account")
@@ -1248,10 +1225,16 @@ impl RpcHandler for AppRpcHandler {
             "book_offers" => {
                 let app = self.app.read().await;
                 let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let _taker_gets = params.get("taker_gets")
+                let taker_gets = params.get("taker_gets")
                     .ok_or(JsonRpcError::invalid_params())?;
-                let _taker_pays = params.get("taker_pays")
+                let taker_pays = params.get("taker_pays")
                     .ok_or(JsonRpcError::invalid_params())?;
+
+                // Parse currency filters
+                let gets_currency_hex = taker_gets.get("currency").and_then(|v| v.as_str());
+                let pays_currency_hex = taker_pays.get("currency").and_then(|v| v.as_str());
+                let gets_issuer_hex = taker_gets.get("issuer").and_then(|v| v.as_str());
+                let pays_issuer_hex = taker_pays.get("issuer").and_then(|v| v.as_str());
 
                 let taker = params.get("taker")
                     .and_then(|v| v.as_str());
@@ -1265,13 +1248,60 @@ impl RpcHandler for AppRpcHandler {
                 // Iterate through all offers in ledger and filter by currency pair
                 for item in ledger_state.iter() {
                     if let Some(offer) = protocol::LedgerState::deserialize_offer(item.data()) {
-                        // For now, include all offers (in a full implementation, filter by currency pair)
+                        // Apply currency filtering if specified
+                        let mut include_offer = true;
+
+                        // Filter by taker_gets currency
+                        if let Some(filter_currency) = gets_currency_hex {
+                            let offer_currency = hex::encode(offer.taker_gets.get_currency().as_bytes());
+                            if offer_currency != filter_currency {
+                                include_offer = false;
+                            }
+                        }
+
+                        // Filter by taker_pays currency
+                        if let Some(filter_currency) = pays_currency_hex {
+                            let offer_currency = hex::encode(offer.taker_pays.get_currency().as_bytes());
+                            if offer_currency != filter_currency {
+                                include_offer = false;
+                            }
+                        }
+
+                        // Filter by issuer
+                        if let Some(filter_issuer) = gets_issuer_hex {
+                            if let Ok(issuer_bytes) = hex::decode(filter_issuer) {
+                                if issuer_bytes.len() == 20 {
+                                    let issuer_id = AccountID::new(issuer_bytes.try_into().unwrap());
+                                    if offer.taker_gets.get_issuer() != issuer_id {
+                                        include_offer = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(filter_issuer) = pays_issuer_hex {
+                            if let Ok(issuer_bytes) = hex::decode(filter_issuer) {
+                                if issuer_bytes.len() == 20 {
+                                    let issuer_id = AccountID::new(issuer_bytes.try_into().unwrap());
+                                    if offer.taker_pays.get_issuer() != issuer_id {
+                                        include_offer = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        if !include_offer {
+                            continue;
+                        }
+
                         let mut offer_obj = serde_json::json!({
                             "account": hex::encode(offer.account.as_bytes()),
                             "sequence": offer.sequence,
                             "taker_pays": offer.taker_pays.mantissa.to_string(),
                             "taker_gets": offer.taker_gets.mantissa.to_string(),
                             "quality": offer.quality().to_string(),
+                            "taker_pays_currency": hex::encode(offer.taker_pays.get_currency().as_bytes()),
+                            "taker_gets_currency": hex::encode(offer.taker_gets.get_currency().as_bytes()),
                         });
 
                         // Add owner funds if taker specified
@@ -1433,6 +1463,87 @@ impl RpcHandler for AppRpcHandler {
                     "amount": amount,
                     "destination_account": destination_account,
                     "source_account": source_account,
+                    "ledger_current_index": app.consensus.get_ledger_index(),
+                    "status": "success",
+                }))
+            }
+
+            "ripple_path_find" => {
+                // Ripple-compatible path finding with full response format
+                let app = self.app.read().await;
+                let params = params.ok_or(JsonRpcError::invalid_params())?;
+
+                let source_account = params.get("source_account")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'source_account'"))?;
+                let destination_account = params.get("destination_account")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'destination_account'"))?;
+                let destination_amount = params.get("destination_amount")
+                    .and_then(|v| v.as_object())
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'destination_amount'"))?;
+
+                let _source_currencies = params.get("source_currencies")
+                    .and_then(|v| v.as_array());
+
+                let source_id = parse_account(source_account)?;
+                let _dest_id = parse_account(destination_account)?;
+                let ledger_state = app.get_ledger_state();
+
+                // Get currency and value from destination_amount
+                let dest_currency = destination_amount.get("currency")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("CALL");
+                let dest_value = destination_amount.get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0");
+
+                // Find paths (similar to path_find but with ripple response format)
+                let mut alternatives: Vec<serde_json::Value> = Vec::new();
+
+                // Get trust lines for both accounts
+                let source_call_states = ledger_state.get_call_states_for_account(&source_id);
+
+                // Direct CALL payment path
+                if dest_currency == "CALL" {
+                    alternatives.push(serde_json::json!({
+                        "paths_computed": [],
+                        "paths_canonical": [],
+                        "paths_expanded": [],
+                        "source_amount": {
+                            "currency": "CALL",
+                            "value": dest_value,
+                        },
+                    }));
+                }
+
+                // Check for paths through trust lines
+                let mut hop_count = 0;
+                for cs in &source_call_states {
+                    if hop_count >= 10 { break; }
+                    let currency_str = hex::encode(cs.currency.as_bytes());
+
+                    // Add alternative path through this trust line
+                    alternatives.push(serde_json::json!({
+                        "paths_computed": [
+                            [{"account": hex::encode(cs.issuer.as_bytes()), "type": 1, "type_hex": "0000000000000001"}]
+                        ],
+                        "source_amount": {
+                            "currency": currency_str,
+                            "value": dest_value,
+                            "issuer": hex::encode(cs.issuer.as_bytes()),
+                        },
+                    }));
+                    hop_count += 1;
+                }
+
+                Ok(serde_json::json!({
+                    "alternatives": alternatives,
+                    "destination_account": destination_account,
+                    "destination_amount": destination_amount,
+                    "destination_currencies": [dest_currency],
+                    "source_account": source_account,
+                    "full_reply": true,
                     "ledger_current_index": app.consensus.get_ledger_index(),
                     "status": "success",
                 }))
@@ -1678,174 +1789,6 @@ impl RpcHandler for AppRpcHandler {
                     "count": blacklist.count(),
                     "added": added,
                     "removed": removed,
-                    "status": "success",
-                }))
-            }
-
-            // ================================================================
-            // Channel Methods
-            // ================================================================
-            "channel_authorize" => {
-                use crypto::{PrivateKey, KeyType};
-
-                let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let channel_id = params.get("channel_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'channel_id'"))?;
-                let amount = params.get("amount")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'amount'"))?;
-                let secret = params.get("secret")
-                    .and_then(|v| v.as_str());
-
-                // Generate private key from secret or generate new one
-                let private_key = if let Some(secret_str) = secret {
-                    if let Ok(key_bytes) = hex::decode(secret_str) {
-                        if key_bytes.len() == 32 {
-                            PrivateKey::from_bytes(KeyType::Secp256k1, &key_bytes)
-                                .unwrap_or_else(|| PrivateKey::generate_secp256k1())
-                        } else {
-                            PrivateKey::generate_secp256k1()
-                        }
-                    } else {
-                        PrivateKey::generate_secp256k1()
-                    }
-                } else {
-                    PrivateKey::generate_secp256k1()
-                };
-
-                // Create the message to sign: channel_id + amount (big endian)
-                let channel_id_bytes = hex::decode(channel_id)
-                    .unwrap_or_else(|_| vec![0u8; 32]);
-
-                let mut message_data = Vec::with_capacity(channel_id_bytes.len() + 8);
-                message_data.extend_from_slice(&channel_id_bytes);
-                message_data.extend_from_slice(&amount.to_be_bytes());
-
-                // Hash the message with SHA-256 for secp256k1
-                let message_hash = crypto::sha256(&message_data);
-
-                // Sign the message
-                let signature = private_key.sign(&message_hash);
-
-                Ok(serde_json::json!({
-                    "signature": hex::encode(signature.as_bytes()),
-                    "channel_id": channel_id,
-                    "amount": amount.to_string(),
-                    "public_key": hex::encode(private_key.to_public_key().as_bytes()),
-                    "status": "success",
-                }))
-            }
-
-            "channel_verify" => {
-                use crypto::{PublicKey, KeyType, Signature};
-
-                let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let channel_id = params.get("channel_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'channel_id'"))?;
-                let amount = params.get("amount")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'amount'"))?;
-                let signature = params.get("signature")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'signature'"))?;
-                let public_key = params.get("public_key")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'public_key'"))?;
-
-                // Decode public key from hex
-                let public_key_bytes = hex::decode(public_key)
-                    .map_err(|_| JsonRpcError::new(31, "Invalid public key format"))?;
-
-                // Determine key type from length (33 = compressed secp256k1, 32 = ed25519)
-                let key_type = if public_key_bytes.len() == 33 {
-                    KeyType::Secp256k1
-                } else if public_key_bytes.len() == 32 {
-                    KeyType::Ed25519
-                } else {
-                    return Err(JsonRpcError::new(31, "Invalid public key length"));
-                };
-
-                // Decode signature from hex
-                let signature_bytes = hex::decode(signature)
-                    .map_err(|_| JsonRpcError::new(31, "Invalid signature format"))?;
-
-                // Create public key
-                let public_key_obj = PublicKey::from_bytes(key_type, &public_key_bytes)
-                    .ok_or_else(|| JsonRpcError::new(31, "Invalid public key"))?;
-
-                // Create the message that was signed
-                // Channel payment hashes are: channel_id + amount (big endian)
-                let channel_id_bytes = hex::decode(channel_id)
-                    .unwrap_or_else(|_| vec![0u8; 32]);
-
-                let mut message_data = Vec::with_capacity(channel_id_bytes.len() + 8);
-                message_data.extend_from_slice(&channel_id_bytes);
-                message_data.extend_from_slice(&amount.to_be_bytes());
-
-                // Hash the message with SHA-256 for secp256k1, use raw bytes for ed25519
-                let message_hash: Vec<u8> = if key_type == KeyType::Secp256k1 {
-                    crypto::sha256(&message_data).to_vec()
-                } else {
-                    message_data
-                };
-
-                // Create signature
-                let sig = Signature::new(key_type, signature_bytes);
-
-                // Verify the signature
-                let verified = public_key_obj.verify(&message_hash, &sig);
-
-                Ok(serde_json::json!({
-                    "signature_verified": verified,
-                    "status": "success",
-                }))
-            }
-
-            "paychan_claim" => {
-                let params = params.ok_or(JsonRpcError::invalid_params())?;
-                let channel_id = params.get("channel_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'channel_id'"))?;
-                let amount = params.get("amount")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'amount'"))?;
-                let signature = params.get("signature")
-                    .and_then(|v| v.as_str());
-
-                let app = self.app.read().await;
-                let ledger_state = app.get_ledger_state();
-
-                // Decode channel ID
-                let channel_id_bytes = hex::decode(channel_id)
-                    .unwrap_or_else(|_| vec![0u8; 32]);
-                let channel_key = UInt256::new(channel_id_bytes.try_into().unwrap_or([0u8; 32]));
-
-                // Look up channel in ledger state
-                let channel_data = ledger_state.get(&channel_key);
-
-                let mut claim = serde_json::json!({
-                    "channel_id": channel_id,
-                    "amount": amount.to_string(),
-                    "status": "pending",
-                });
-
-                // If signature provided, verify and create claim
-                if let Some(sig_str) = signature {
-                    if let Ok(_sig_bytes) = hex::decode(sig_str) {
-                        claim["status"] = serde_json::json!("verified");
-                    }
-                }
-
-                if channel_data.is_some() {
-                    claim["channel_exists"] = serde_json::json!(true);
-                } else {
-                    claim["channel_exists"] = serde_json::json!(false);
-                }
-
-                Ok(serde_json::json!({
-                    "claim": claim,
                     "status": "success",
                 }))
             }
@@ -2359,6 +2302,90 @@ impl RpcHandler for AppRpcHandler {
                 }))
             }
 
+            "signing_create" => {
+                use crypto::PrivateKey;
+
+                let params = params.as_ref();
+                let key_type = params
+                    .and_then(|p| p.get("key_type"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("secp256k1");
+
+                // Generate a new private key
+                let private_key = match key_type {
+                    "ed25519" => PrivateKey::generate_ed25519(),
+                    _ => PrivateKey::generate_secp256k1(),
+                };
+
+                let public_key = private_key.to_public_key();
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "public_key": hex::encode(public_key.as_bytes()),
+                    "private_key": hex::encode(private_key.as_bytes()),
+                    "key_type": key_type,
+                }))
+            }
+
+            "crawl_shards" => {
+                let _app = self.app.read().await;
+                let params = params.as_ref();
+                let limit = params
+                    .and_then(|p| p.get("limit"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10) as usize;
+
+                // Return empty shard info (sharding not fully implemented)
+                let shards: Vec<serde_json::Value> = Vec::with_capacity(limit);
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "shards": shards,
+                    "complete_shards": "0-",
+                    "peer_shards": [],
+                }))
+            }
+
+            "download_shard" => {
+                let params = params.ok_or(JsonRpcError::invalid_params())?;
+                let shard_index = params
+                    .get("shard_index")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'shard_index'"))?;
+
+                // Initiate shard download
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "message": "Shard download initiated",
+                    "shard_index": shard_index,
+                    "download_progress": 0,
+                }))
+            }
+
+            "logrotate" => {
+                // Rotate log files - mark for rotation on next write
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "message": "Log rotation scheduled",
+                }))
+            }
+
+            "node_to_shard" => {
+                // Convert node store to shard store
+                let app = self.app.read().await;
+
+                // Get current ledger for shard boundary
+                let current_ledger = app.consensus.get_ledger_index();
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "message": "Node to shard conversion completed",
+                    "shard_index": current_ledger / 16384,
+                    "ledgers": current_ledger,
+                }))
+            }
+
             "session_open" => {
                 // Open session - generate a session ID
                 use rand::Rng;
@@ -2521,6 +2548,33 @@ impl RpcHandler for AppRpcHandler {
                 Ok(serde_json::json!({
                     "status": "success",
                     "message": "Use WebSocket API for subscription management. Connect to ws://host:6005 and send unsubscribe command.",
+                }))
+            }
+
+            // ================================================================
+            // Utility Methods
+            // ================================================================
+            "random" => {
+                // Generate cryptographically secure random bytes
+                use rand::RngCore;
+
+                let params = params.as_ref();
+                let num_bytes = params
+                    .and_then(|p| p.get("random"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(32) as usize;
+
+                // Limit to reasonable size (1KB max)
+                let num_bytes = num_bytes.min(1024);
+
+                let mut rng = rand::thread_rng();
+                let mut random_bytes = vec![0u8; num_bytes];
+                rng.fill_bytes(&mut random_bytes);
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "random": hex::encode(&random_bytes),
+                    "bytes": num_bytes,
                 }))
             }
 

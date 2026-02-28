@@ -7,14 +7,23 @@ use serialization::{Amount, STObject};
 pub enum TxType {
     Invalid = -1,
     Payment = 0,
+    // 1,2,4 reserved for Escrow (excluded)
     AccountSet = 3,
+    // 5 reserved for future use
     SetRegularKey = 5,
     NicknameSet = 6,
     OfferCreate = 7,
     OfferCancel = 8,
+    // 9 reserved
+    // 10,11 reserved for Ticket (excluded)
     SignerListSet = 12,
+    // 13,14,15 reserved for PayChannel (excluded)
     IssueSet = 16,
+    // 17-19 reserved
     TrustSet = 20,
+    // Pseudotransactions
+    EnableAmendment = 100,
+    SetFee = 101,
 }
 
 impl TxType {
@@ -34,6 +43,9 @@ impl TxType {
             12 => Some(Self::SignerListSet),
             16 => Some(Self::IssueSet),
             20 => Some(Self::TrustSet),
+            100 => Some(Self::EnableAmendment),
+            101 => Some(Self::SetFee),
+            // Escrow (1,2,4), Ticket (10,11), PayChannel (13,14,15) excluded
             _ => None,
         }
     }
@@ -73,6 +85,7 @@ pub enum TER {
     tecUNFUNDED = 130,
     tecNO_ALTERNATIVE_KEY = 131,
     tecNO_REGULAR_KEY = 132,
+    tecNO_PERMISSION = 139,
     tecDUPLICATE = 149,
 
     // Malformed transactions (-199 to -100)
@@ -167,6 +180,8 @@ pub struct Transaction {
     pub amount: Option<Amount>,
     pub destination_tag: Option<u32>,
     pub send_max: Option<Amount>,
+    pub deliver_min: Option<Amount>,        // For partial payments
+    pub invoice_id: Option<UInt256>,        // For invoice/NFT payments
     // TrustSet fields
     pub limit_amount: Option<Amount>,
     pub issuer: Option<AccountID>,
@@ -195,6 +210,14 @@ pub struct Transaction {
     // NicknameSet fields
     pub nickname: Option<Vec<u8>>,
     pub min_offer: Option<Amount>,
+    // EnableAmendment fields
+    pub amendment_hash: Option<UInt256>,
+    pub ledger_sequence: Option<u32>,
+    // SetFee fields
+    pub base_fee: Option<u64>,
+    pub reference_fee_units: Option<u32>,
+    pub reserve_base: Option<u64>,
+    pub reserve_increment: Option<u64>,
 }
 
 impl Transaction {
@@ -212,6 +235,8 @@ impl Transaction {
             amount: None,
             destination_tag: None,
             send_max: None,
+            deliver_min: None,
+            invoice_id: None,
             limit_amount: None,
             issuer: None,
             quality_in: None,
@@ -233,6 +258,12 @@ impl Transaction {
             total_supply: None,
             nickname: None,
             min_offer: None,
+            amendment_hash: None,
+            ledger_sequence: None,
+            base_fee: None,
+            reference_fee_units: None,
+            reserve_base: None,
+            reserve_increment: None,
         }
     }
 
@@ -241,6 +272,34 @@ impl Transaction {
         let mut tx = Self::new(TxType::Payment, account, 1);
         tx.destination = Some(destination);
         tx.amount = Some(amount);
+        tx
+    }
+
+    /// Create a new partial payment transaction with deliver_min
+    pub fn new_partial_payment(
+        account: AccountID,
+        destination: AccountID,
+        amount: Amount,
+        deliver_min: Amount,
+    ) -> Self {
+        let mut tx = Self::new(TxType::Payment, account, 1);
+        tx.destination = Some(destination);
+        tx.amount = Some(amount);
+        tx.deliver_min = Some(deliver_min);
+        tx
+    }
+
+    /// Create a new payment with invoice ID (for NFT/invoice payments)
+    pub fn new_payment_with_invoice(
+        account: AccountID,
+        destination: AccountID,
+        amount: Amount,
+        invoice_id: UInt256,
+    ) -> Self {
+        let mut tx = Self::new(TxType::Payment, account, 1);
+        tx.destination = Some(destination);
+        tx.amount = Some(amount);
+        tx.invoice_id = Some(invoice_id);
         tx
     }
 
@@ -303,6 +362,40 @@ impl Transaction {
         let mut tx = Self::new(TxType::NicknameSet, account, sequence);
         tx.nickname = Some(nickname);
         tx
+    }
+
+    /// Create a new EnableAmendment pseudotransaction
+    /// Note: Pseudotransactions have no account or fee
+    pub fn new_enable_amendment(amendment_hash: UInt256, ledger_sequence: u32) -> Self {
+        let mut tx = Self::new(TxType::EnableAmendment, AccountID::new([0u8; 20]), 0);
+        tx.amendment_hash = Some(amendment_hash);
+        tx.ledger_sequence = Some(ledger_sequence);
+        tx.fee = 0;
+        tx
+    }
+
+    /// Create a new SetFee pseudotransaction
+    /// Note: Pseudotransactions have no account or fee
+    pub fn new_set_fee(
+        base_fee: u64,
+        reference_fee_units: u32,
+        reserve_base: u64,
+        reserve_increment: u64,
+        ledger_sequence: u32,
+    ) -> Self {
+        let mut tx = Self::new(TxType::SetFee, AccountID::new([0u8; 20]), 0);
+        tx.base_fee = Some(base_fee);
+        tx.reference_fee_units = Some(reference_fee_units);
+        tx.reserve_base = Some(reserve_base);
+        tx.reserve_increment = Some(reserve_increment);
+        tx.ledger_sequence = Some(ledger_sequence);
+        tx.fee = 0;
+        tx
+    }
+
+    /// Check if this is a pseudotransaction (no account/fee)
+    pub fn is_pseudotransaction(&self) -> bool {
+        matches!(self.tx_type, TxType::EnableAmendment | TxType::SetFee)
     }
 
     pub fn get_hash(&self) -> UInt256 {
@@ -428,13 +521,17 @@ mod tests {
     fn test_tx_type_roundtrip() {
         // Values must match calld specification
         assert_eq!(TxType::Payment.as_i16(), 0);
+        // 1,2,4 reserved for Escrow (excluded)
         assert_eq!(TxType::AccountSet.as_i16(), 3);
+        // 5 reserved for future use
         assert_eq!(TxType::SetRegularKey.as_i16(), 5);
         assert_eq!(TxType::OfferCreate.as_i16(), 7);
         assert_eq!(TxType::OfferCancel.as_i16(), 8);
         assert_eq!(TxType::SignerListSet.as_i16(), 12);
         assert_eq!(TxType::IssueSet.as_i16(), 16);
         assert_eq!(TxType::TrustSet.as_i16(), 20);
+        assert_eq!(TxType::EnableAmendment.as_i16(), 100);
+        assert_eq!(TxType::SetFee.as_i16(), 101);
 
         // Test from_i16 roundtrip
         assert_eq!(TxType::from_i16(0), Some(TxType::Payment));
@@ -446,7 +543,39 @@ mod tests {
         assert_eq!(TxType::from_i16(16), Some(TxType::IssueSet));
         assert_eq!(TxType::from_i16(6), Some(TxType::NicknameSet));
         assert_eq!(TxType::from_i16(20), Some(TxType::TrustSet));
+        assert_eq!(TxType::from_i16(100), Some(TxType::EnableAmendment));
+        assert_eq!(TxType::from_i16(101), Some(TxType::SetFee));
+        // Excluded types return None
+        assert_eq!(TxType::from_i16(1), None); // EscrowCreate
+        assert_eq!(TxType::from_i16(10), None); // TicketCreate
+        assert_eq!(TxType::from_i16(13), None); // PayChanCreate
         assert_eq!(TxType::from_i16(999), None);
+    }
+
+    #[test]
+    fn test_pseudotransaction_enable_amendment() {
+        let amendment_hash = UInt256::new([1u8; 32]);
+        let tx = Transaction::new_enable_amendment(amendment_hash, 1000);
+
+        assert_eq!(tx.get_tx_type(), TxType::EnableAmendment);
+        assert!(tx.is_pseudotransaction());
+        assert_eq!(tx.amendment_hash, Some(amendment_hash));
+        assert_eq!(tx.ledger_sequence, Some(1000));
+        assert_eq!(tx.get_fee(), 0);
+    }
+
+    #[test]
+    fn test_pseudotransaction_set_fee() {
+        let tx = Transaction::new_set_fee(10, 256, 10000000, 2000000, 1000);
+
+        assert_eq!(tx.get_tx_type(), TxType::SetFee);
+        assert!(tx.is_pseudotransaction());
+        assert_eq!(tx.base_fee, Some(10));
+        assert_eq!(tx.reference_fee_units, Some(256));
+        assert_eq!(tx.reserve_base, Some(10000000));
+        assert_eq!(tx.reserve_increment, Some(2000000));
+        assert_eq!(tx.ledger_sequence, Some(1000));
+        assert_eq!(tx.get_fee(), 0);
     }
 
     #[test]

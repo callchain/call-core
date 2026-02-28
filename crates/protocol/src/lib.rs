@@ -11,7 +11,7 @@ pub use bootstrap::{
     BootstrapConfig, BootstrapManager, GenesisConfig, GenesisLoader, LedgerSynchronizer,
     LedgerValidation, PeerDiscovery, SyncStatus, SyncStats,
 };
-pub use dex::{BookKey, Flow, Offer, OfferBook, Pathfinder, Taker};
+pub use dex::{BookKey, Flow, FoundPath, Offer, OfferBook, Pathfinder, Taker, TrustLine};
 pub use ledger::{Fees, Ledger, LedgerIndex, LedgerInfo, OpenView, ReadView};
 pub use ledger_entries::{
     AccountRoot, CallState, DirectoryNode, LedgerEntry, LedgerEntryType, LedgerObject, LedgerState, NicknameEntry, OfferEntry,

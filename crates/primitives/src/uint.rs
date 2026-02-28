@@ -125,6 +125,16 @@ macro_rules! define_uint {
                 &mut self.bytes
             }
         }
+
+        impl $name {
+            /// Generate a random value using thread_rng
+            pub fn random() -> Self {
+                use rand::RngCore;
+                let mut bytes = [0u8; $n_bytes];
+                rand::thread_rng().fill_bytes(&mut bytes);
+                Self { bytes }
+            }
+        }
     };
 }
 

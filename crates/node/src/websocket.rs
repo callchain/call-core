@@ -53,12 +53,20 @@ pub struct WebSocketServer {
     ledger_tx: broadcast::Sender<serde_json::Value>,
     /// Broadcast channel for transaction updates
     transactions_tx: broadcast::Sender<serde_json::Value>,
+    /// Broadcast channel for proposed transaction updates
+    transactions_proposed_tx: broadcast::Sender<serde_json::Value>,
     /// Broadcast channel for validation updates
     validations_tx: broadcast::Sender<serde_json::Value>,
     /// Broadcast channel for consensus updates
     consensus_tx: broadcast::Sender<serde_json::Value>,
     /// Broadcast channel for peer events
     peer_tx: broadcast::Sender<serde_json::Value>,
+    /// Broadcast channel for manifest updates
+    manifests_tx: broadcast::Sender<serde_json::Value>,
+    /// Broadcast channel for server status updates
+    server_tx: broadcast::Sender<serde_json::Value>,
+    /// Broadcast channel for book changes (DEX)
+    book_changes_tx: broadcast::Sender<serde_json::Value>,
     /// Active connections
     connections: Arc<RwLock<ConnectionManager>>,
     /// Next connection ID
@@ -86,12 +94,20 @@ struct Subscriptions {
     ledger: bool,
     /// Subscribe to all transactions
     transactions: bool,
+    /// Subscribe to proposed transactions (not yet validated)
+    transactions_proposed: bool,
     /// Subscribe to validations
     validations: bool,
     /// Subscribe to consensus events
     consensus: bool,
     /// Subscribe to peer events
     peer: bool,
+    /// Subscribe to manifest updates
+    manifests: bool,
+    /// Subscribe to server status updates
+    server: bool,
+    /// Subscribe to book changes (DEX)
+    book_changes: bool,
     /// Subscribe to specific accounts
     accounts: HashSet<String>,
     /// Subscribe to specific streams
@@ -201,18 +217,26 @@ impl WebSocketServer {
     pub fn new(config: WebSocketConfig, app: ApplicationHandle) -> Self {
         let (ledger_tx, _) = broadcast::channel(100);
         let (transactions_tx, _) = broadcast::channel(1000);
+        let (transactions_proposed_tx, _) = broadcast::channel(1000);
         let (validations_tx, _) = broadcast::channel(100);
         let (consensus_tx, _) = broadcast::channel(50);
         let (peer_tx, _) = broadcast::channel(50);
+        let (manifests_tx, _) = broadcast::channel(50);
+        let (server_tx, _) = broadcast::channel(50);
+        let (book_changes_tx, _) = broadcast::channel(100);
 
         Self {
             config,
             app,
             ledger_tx,
             transactions_tx,
+            transactions_proposed_tx,
             validations_tx,
             consensus_tx,
             peer_tx,
+            manifests_tx,
+            server_tx,
+            book_changes_tx,
             connections: Arc::new(RwLock::new(ConnectionManager::default())),
             next_conn_id: Arc::new(Mutex::new(0)),
         }
@@ -345,6 +369,7 @@ impl WebSocketServer {
         // Subscribe to broadcast channels
         let mut ledger_rx = self.ledger_tx.subscribe();
         let mut transactions_rx = self.transactions_tx.subscribe();
+        let mut transactions_proposed_rx = self.transactions_proposed_tx.subscribe();
         let mut validations_rx = self.validations_tx.subscribe();
         let mut consensus_rx = self.consensus_tx.subscribe();
         let mut peer_rx = self.peer_tx.subscribe();
@@ -372,6 +397,16 @@ impl WebSocketServer {
                         if subscriptions_clone.lock().await.transactions {
                             let msg = serde_json::to_string(&WsResponse::Transaction {
                                 transaction: tx,
+                                ledger_index: None,
+                                validated: false,
+                            }).unwrap();
+                            let _ = sender_clone.lock().await.send(Message::Text(msg)).await;
+                        }
+                    }
+                    Ok(tx_proposed) = transactions_proposed_rx.recv() => {
+                        if subscriptions_clone.lock().await.transactions_proposed {
+                            let msg = serde_json::to_string(&WsResponse::Transaction {
+                                transaction: tx_proposed,
                                 ledger_index: None,
                                 validated: false,
                             }).unwrap();
@@ -492,6 +527,11 @@ impl WebSocketServer {
         let _ = self.transactions_tx.send(tx);
     }
 
+    /// Broadcast a proposed transaction to all subscribers
+    pub fn broadcast_transaction_proposed(&self, tx: serde_json::Value) {
+        let _ = self.transactions_proposed_tx.send(tx);
+    }
+
     /// Broadcast a validation to all subscribers
     pub fn broadcast_validation(&self, validation: serde_json::Value) {
         let _ = self.validations_tx.send(validation);
@@ -505,6 +545,21 @@ impl WebSocketServer {
     /// Broadcast a peer event
     pub fn broadcast_peer(&self, peer: serde_json::Value) {
         let _ = self.peer_tx.send(peer);
+    }
+
+    /// Broadcast a manifest update to all subscribers
+    pub fn broadcast_manifest(&self, manifest: serde_json::Value) {
+        let _ = self.manifests_tx.send(manifest);
+    }
+
+    /// Broadcast a server status update to all subscribers
+    pub fn broadcast_server(&self, server: serde_json::Value) {
+        let _ = self.server_tx.send(server);
+    }
+
+    /// Broadcast a book change (DEX) to all subscribers
+    pub fn broadcast_book_change(&self, change: serde_json::Value) {
+        let _ = self.book_changes_tx.send(change);
     }
 }
 
@@ -522,9 +577,13 @@ async fn handle_subscribe(
             match stream.as_str() {
                 "ledger" => subs.ledger = true,
                 "transactions" | "transaction" => subs.transactions = true,
+                "transactions_proposed" => subs.transactions_proposed = true,
                 "validations" | "validation" => subs.validations = true,
                 "consensus" => subs.consensus = true,
                 "peer" => subs.peer = true,
+                "manifests" => subs.manifests = true,
+                "server" => subs.server = true,
+                "book_changes" => subs.book_changes = true,
                 _ => {}
             }
             subs.streams.insert(stream);
@@ -554,9 +613,13 @@ async fn handle_unsubscribe(
             match stream.as_str() {
                 "ledger" => subs.ledger = false,
                 "transactions" | "transaction" => subs.transactions = false,
+                "transactions_proposed" => subs.transactions_proposed = false,
                 "validations" | "validation" => subs.validations = false,
                 "consensus" => subs.consensus = false,
                 "peer" => subs.peer = false,
+                "manifests" => subs.manifests = false,
+                "server" => subs.server = false,
+                "book_changes" => subs.book_changes = false,
                 _ => {}
             }
             subs.streams.remove(&stream);
@@ -575,10 +638,12 @@ async fn handle_unsubscribe(
 /// Handle server_info command
 async fn handle_server_info(app: &ApplicationHandle, id: Option<u64>) -> WsResponse {
     let app_guard = app.read().await;
+    let ledger_index = app_guard.get_current_ledger_seq();
+    let ledger_hash = app_guard.get_current_ledger_hash();
     let info = serde_json::json!({
         "info": {
             "build_version": "0.1.0",
-            "complete_ledgers": format!("1-{}", app_guard.consensus.get_ledger_index()),
+            "complete_ledgers": format!("1-{}", ledger_index),
             "io_latency_ms": 1,
             "load_factor": 1,
             "peers": app_guard.overlay.active_peer_count(),
@@ -592,8 +657,8 @@ async fn handle_server_info(app: &ApplicationHandle, id: Option<u64>) -> WsRespo
             },
             "uptime": 0,
             "validated_ledger": {
-                "ledger_index": app_guard.consensus.get_ledger_index(),
-                "ledger_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+                "ledger_index": ledger_index,
+                "ledger_hash": hex::encode(ledger_hash.as_bytes()),
             },
         }
     });
@@ -603,14 +668,19 @@ async fn handle_server_info(app: &ApplicationHandle, id: Option<u64>) -> WsRespo
 /// Handle ledger command
 async fn handle_ledger(app: &ApplicationHandle, id: Option<u64>) -> WsResponse {
     let app_guard = app.read().await;
-    let ledger_index = app_guard.consensus.get_ledger_index();
+    let ledger_index = app_guard.get_current_ledger_seq();
+    let ledger_hash = app_guard.get_current_ledger_hash();
+    let ledger_state = app_guard.get_ledger_state();
+    let account_hash = ledger_state.get_root_hash();
+
     let ledger = serde_json::json!({
         "ledger": {
             "ledger_index": ledger_index,
-            "ledger_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "ledger_hash": hex::encode(ledger_hash.as_bytes()),
+            "account_hash": hex::encode(account_hash.as_bytes()),
             "close_time": chrono::Utc::now().timestamp(),
-            "closed": false,
-            "validated": false,
+            "closed": true,
+            "validated": true,
         }
     });
     WsResponse::success(id, Some(ledger))
@@ -835,13 +905,14 @@ async fn broadcaster_task(
             _ = ledger_interval.tick() => {
                 // Get current ledger info from app
                 let app_guard = app.read().await;
-                let ledger_index = app_guard.consensus.get_ledger_index();
+                let ledger_index = app_guard.get_current_ledger_seq();
+                let ledger_hash = app_guard.get_current_ledger_hash();
 
                 // Broadcast ledger update if changed
                 if ledger_index > last_ledger_index {
                     let ledger_info = serde_json::json!({
                         "ledger_index": ledger_index,
-                        "ledger_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "ledger_hash": hex::encode(ledger_hash.as_bytes()),
                         "close_time": chrono::Utc::now().timestamp(),
                         "close_time_human": chrono::Utc::now().to_rfc3339(),
                         "closed": true,

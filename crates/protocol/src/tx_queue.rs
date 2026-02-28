@@ -113,7 +113,7 @@ fn calculate_tx_fee_units(tx: &Transaction) -> u32 {
             // Payment with paths is more complex
             // Note: If the transaction has path-related fields, it's more complex
             1
-        },
+        }
         TxType::AccountSet => 1,
         TxType::TrustSet => 1,
         TxType::OfferCreate => 2, // More complex
@@ -122,6 +122,9 @@ fn calculate_tx_fee_units(tx: &Transaction) -> u32 {
         TxType::SignerListSet => 2, // More complex (multi-sig)
         TxType::IssueSet => 2,      // Token issuance
         TxType::NicknameSet => 1,   // Nickname registration
+        // Pseudotransactions have no fee
+        TxType::EnableAmendment => 0,
+        TxType::SetFee => 0,
         TxType::Invalid => 0,
     };
 

@@ -8,6 +8,35 @@ use serialization::{Amount, STObject, STValue};
 use serialization::types::sf;
 use crate::SignerEntry;
 
+/// AccountRoot flags (lsf*)
+/// These flags are stored in AccountRoot.flags and can be set/cleared via AccountSet
+pub mod account_flags {
+    pub const LSF_DEFAULT_CALL: u32 = 0x00000001;
+    pub const LSF_NO_CALL: u32 = 0x00000002; // Callchain specific
+    pub const LSF_REQUIRE_DEST_TAG: u32 = 0x00000004;
+    pub const LSF_REQUIRE_AUTH: u32 = 0x00000008;
+    pub const LSF_DISALLOW_CALL: u32 = 0x00000010;
+    pub const LSF_DISABLE_MASTER: u32 = 0x00000020;
+    pub const LSF_NO_FREEZE: u32 = 0x00000040;
+    pub const LSF_GLOBAL_FREEZE: u32 = 0x00000080;
+    pub const LSF_DEPOSIT_AUTH: u32 = 0x00000100;
+}
+
+/// AccountSet transaction flags (asf*)
+/// These are used in the SetFlag/ClearFlag fields of AccountSet transactions
+pub mod account_set_flags {
+    pub const ASF_ACCOUNT_TXN_ID: u32 = 5;
+    pub const ASF_NO_CALL: u32 = 6; // Callchain specific
+    pub const ASF_REQUIRE_DEST_TAG: u32 = 1;
+    pub const ASF_REQUIRE_AUTH: u32 = 2;
+    pub const ASF_DISALLOW_CALL: u32 = 3;
+    pub const ASF_DISABLE_MASTER: u32 = 4;
+    pub const ASF_NO_FREEZE: u32 = 6;
+    pub const ASF_GLOBAL_FREEZE: u32 = 7;
+    pub const ASF_DEFAULT_CALL: u32 = 8;
+    pub const ASF_DEPOSIT_AUTH: u32 = 9;
+}
+
 /// Ledger entry types
 /// Values match calld specification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +116,7 @@ pub struct AccountRoot {
     pub balance: Amount,
     pub sequence: u32,
     pub owner_count: u32,
+    pub flags: u32,
     pub previous_txn_id: UInt256,
     pub previous_txn_lgr_seq: u32,
     pub account_txn_id: Option<UInt256>,
@@ -103,11 +133,13 @@ pub struct AccountRoot {
 
 impl AccountRoot {
     pub fn new(account: AccountID) -> Self {
+        use account_flags::LSF_DEFAULT_CALL;
         Self {
             account,
             balance: Amount::call(0),
             sequence: 1,
             owner_count: 0,
+            flags: LSF_DEFAULT_CALL, // Default flag is set
             previous_txn_id: UInt256::zero(),
             previous_txn_lgr_seq: 0,
             account_txn_id: None,
@@ -143,6 +175,55 @@ impl AccountRoot {
     pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
         self.previous_txn_id = txn_id;
         self.previous_txn_lgr_seq = lgr_seq;
+    }
+
+    // Flag checking methods
+    pub fn has_flag(&self, flag: u32) -> bool {
+        (self.flags & flag) == flag
+    }
+
+    pub fn set_flag(&mut self, flag: u32) {
+        self.flags |= flag;
+    }
+
+    pub fn clear_flag(&mut self, flag: u32) {
+        self.flags &= !flag;
+    }
+
+    pub fn is_default_call(&self) -> bool {
+        self.has_flag(account_flags::LSF_DEFAULT_CALL)
+    }
+
+    pub fn is_no_call(&self) -> bool {
+        self.has_flag(account_flags::LSF_NO_CALL)
+    }
+
+    pub fn requires_dest_tag(&self) -> bool {
+        self.has_flag(account_flags::LSF_REQUIRE_DEST_TAG)
+    }
+
+    pub fn requires_auth(&self) -> bool {
+        self.has_flag(account_flags::LSF_REQUIRE_AUTH)
+    }
+
+    pub fn is_disallow_call(&self) -> bool {
+        self.has_flag(account_flags::LSF_DISALLOW_CALL)
+    }
+
+    pub fn is_disable_master(&self) -> bool {
+        self.has_flag(account_flags::LSF_DISABLE_MASTER)
+    }
+
+    pub fn is_no_freeze(&self) -> bool {
+        self.has_flag(account_flags::LSF_NO_FREEZE)
+    }
+
+    pub fn is_global_freeze(&self) -> bool {
+        self.has_flag(account_flags::LSF_GLOBAL_FREEZE)
+    }
+
+    pub fn requires_deposit_auth(&self) -> bool {
+        self.has_flag(account_flags::LSF_DEPOSIT_AUTH)
     }
 
     /// Compute the ledger index for an account without having the full AccountRoot
@@ -181,6 +262,9 @@ impl LedgerEntry for AccountRoot {
         obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
         obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
 
+        // Flags (always serialize, even if 0, for compatibility)
+        obj.insert(sf::FLAGS, STValue::UInt32(self.flags));
+
         // Optional fields - only include if present
         if let Some(ref account_txn_id) = self.account_txn_id {
             obj.insert(sf::ACCOUNT_TXN_ID, STValue::Hash256(*account_txn_id));
@@ -203,6 +287,12 @@ impl LedgerEntry for AccountRoot {
         if let Some(ref regular_key) = self.regular_key {
             obj.insert(sf::REGULAR_KEY, STValue::Account(*regular_key));
         }
+        if let Some(tick_size) = self.tick_size {
+            obj.insert(sf::TICK_SIZE, STValue::UInt8(tick_size));
+        }
+        if let Some(ref email_hash) = self.email_hash {
+            obj.insert(sf::EMAIL_HASH, STValue::Hash256(*email_hash));
+        }
 
         obj
     }
@@ -217,6 +307,9 @@ impl LedgerEntry for AccountRoot {
         let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID)?;
         let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ)?;
 
+        // Flags (default to LSF_DEFAULT_CALL if not present for backward compatibility)
+        let flags = obj.get_uint32(sf::FLAGS).unwrap_or(account_flags::LSF_DEFAULT_CALL);
+
         // Optional fields
         let account_txn_id = obj.get_hash256(sf::ACCOUNT_TXN_ID);
         let wallet_locator = obj.get_hash256(sf::WALLET_LOCATOR);
@@ -225,12 +318,15 @@ impl LedgerEntry for AccountRoot {
         let domain = obj.get_vl(sf::DOMAIN).map(|v| v.to_vec());
         let transfer_rate = obj.get_uint32(sf::TRANSFER_RATE);
         let regular_key = obj.get_account(sf::REGULAR_KEY);
+        let tick_size = obj.get_uint8(sf::TICK_SIZE);
+        let email_hash = obj.get_hash256(sf::EMAIL_HASH);
 
         Some(Self {
             account,
             balance,
             sequence,
             owner_count,
+            flags,
             previous_txn_id,
             previous_txn_lgr_seq,
             account_txn_id,
@@ -240,9 +336,9 @@ impl LedgerEntry for AccountRoot {
             domain,
             transfer_rate,
             code_garage: None,
-            email_hash: None,
+            email_hash,
             regular_key,
-            tick_size: None,
+            tick_size,
         })
     }
 }
@@ -333,6 +429,48 @@ impl CallState {
 
         // Use SHA-512 half for the ledger index
         crypto::sha512_half(&data)
+    }
+
+    /// Get the quality multiplier for incoming IOUs
+    /// Returns 1.0 if no quality is set (default behavior)
+    /// Quality is stored as a 32-bit unsigned integer where:
+    /// - 0 = no quality set (treated as 1.0, i.e., 100%)
+    /// - 1000000000 = 1.0 (100% quality, no markup/discount)
+    /// - > 1000000000 = premium (pay more to receive)
+    /// - < 1000000000 = discount (pay less to receive)
+    pub fn get_quality_in(&self) -> f64 {
+        self.quality_in
+            .map(|q| if q == 0 { 1.0 } else { q as f64 / 1_000_000_000.0 })
+            .unwrap_or(1.0)
+    }
+
+    /// Get the quality multiplier for outgoing IOUs
+    /// Returns 1.0 if no quality is set (default behavior)
+    pub fn get_quality_out(&self) -> f64 {
+        self.quality_out
+            .map(|q| if q == 0 { 1.0 } else { q as f64 / 1_000_000_000.0 })
+            .unwrap_or(1.0)
+    }
+
+    /// Calculate the effective amount received after applying quality in
+    /// When someone sends IOUs to this account, this determines how much
+    /// the account values those IOUs relative to face value
+    pub fn apply_quality_in(&self, amount: u64) -> u64 {
+        let quality = self.get_quality_in();
+        ((amount as f64) * quality) as u64
+    }
+
+    /// Calculate the effective amount sent after applying quality out
+    /// When this account sends IOUs, this determines how much the recipient
+    /// actually receives relative to the face value
+    pub fn apply_quality_out(&self, amount: u64) -> u64 {
+        let quality = self.get_quality_out();
+        ((amount as f64) / quality) as u64
+    }
+
+    /// Check if this trust line has quality settings configured
+    pub fn has_quality_settings(&self) -> bool {
+        self.quality_in.is_some() || self.quality_out.is_some()
     }
 }
 
@@ -1826,6 +1964,7 @@ impl LedgerState {
             balance,
             sequence,
             owner_count,
+            flags: account_flags::LSF_DEFAULT_CALL,
             previous_txn_id,
             previous_txn_lgr_seq,
             account_txn_id: None,
@@ -2310,5 +2449,77 @@ mod tests {
         let mut entry = NicknameEntry::new(nickname.to_vec(), account);
         entry.set_min_offer(amount.clone());
         assert_eq!(entry.min_offer, Some(amount));
+    }
+
+    #[test]
+    fn test_account_root_flags() {
+        let account = AccountID::new([1u8; 20]);
+        let mut account_root = AccountRoot::new(account);
+
+        // Default flag is LSF_DEFAULT_CALL
+        assert!(account_root.is_default_call());
+        assert!(!account_root.requires_dest_tag());
+        assert!(!account_root.is_disable_master());
+
+        // Test setting flags
+        account_root.set_flag(account_flags::LSF_REQUIRE_DEST_TAG);
+        assert!(account_root.requires_dest_tag());
+
+        account_root.set_flag(account_flags::LSF_DISABLE_MASTER);
+        assert!(account_root.is_disable_master());
+
+        // Test clearing flags
+        account_root.clear_flag(account_flags::LSF_REQUIRE_DEST_TAG);
+        assert!(!account_root.requires_dest_tag());
+
+        // Test has_flag
+        assert!(account_root.has_flag(account_flags::LSF_DEFAULT_CALL));
+        assert!(account_root.has_flag(account_flags::LSF_DISABLE_MASTER));
+        assert!(!account_root.has_flag(account_flags::LSF_REQUIRE_DEST_TAG));
+    }
+
+    #[test]
+    fn test_account_root_flag_values() {
+        // Verify flag values match calld specification
+        assert_eq!(account_flags::LSF_DEFAULT_CALL, 0x00000001);
+        assert_eq!(account_flags::LSF_NO_CALL, 0x00000002);
+        assert_eq!(account_flags::LSF_REQUIRE_DEST_TAG, 0x00000004);
+        assert_eq!(account_flags::LSF_REQUIRE_AUTH, 0x00000008);
+        assert_eq!(account_flags::LSF_DISALLOW_CALL, 0x00000010);
+        assert_eq!(account_flags::LSF_DISABLE_MASTER, 0x00000020);
+        assert_eq!(account_flags::LSF_NO_FREEZE, 0x00000040);
+        assert_eq!(account_flags::LSF_GLOBAL_FREEZE, 0x00000080);
+        assert_eq!(account_flags::LSF_DEPOSIT_AUTH, 0x00000100);
+    }
+
+    #[test]
+    fn test_account_set_flag_values() {
+        // Verify AccountSet flag values match calld specification
+        assert_eq!(account_set_flags::ASF_REQUIRE_DEST_TAG, 1);
+        assert_eq!(account_set_flags::ASF_REQUIRE_AUTH, 2);
+        assert_eq!(account_set_flags::ASF_DISALLOW_CALL, 3);
+        assert_eq!(account_set_flags::ASF_DISABLE_MASTER, 4);
+        assert_eq!(account_set_flags::ASF_ACCOUNT_TXN_ID, 5);
+        assert_eq!(account_set_flags::ASF_NO_FREEZE, 6);
+        assert_eq!(account_set_flags::ASF_GLOBAL_FREEZE, 7);
+        assert_eq!(account_set_flags::ASF_DEFAULT_CALL, 8);
+        assert_eq!(account_set_flags::ASF_DEPOSIT_AUTH, 9);
+    }
+
+    #[test]
+    fn test_deposit_authorization() {
+        let account = AccountID::new([1u8; 20]);
+        let mut account_root = AccountRoot::new(account);
+
+        // By default, deposit authorization is not required
+        assert!(!account_root.requires_deposit_auth());
+
+        // Enable deposit authorization
+        account_root.set_flag(account_flags::LSF_DEPOSIT_AUTH);
+        assert!(account_root.requires_deposit_auth());
+
+        // Disable deposit authorization
+        account_root.clear_flag(account_flags::LSF_DEPOSIT_AUTH);
+        assert!(!account_root.requires_deposit_auth());
     }
 }

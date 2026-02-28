@@ -522,16 +522,19 @@ impl STObject {
 pub enum TxType {
     Invalid,
     Payment,
+    // 1,2,4 reserved for Escrow (excluded)
     AccountSet,
-    RegularKeySet,
+    SetRegularKey,
     NicknameSet,
     OfferCreate,
     OfferCancel,
+    // 10,11 reserved for Ticket (excluded)
     SignerListSet,
+    // 13,14,15 reserved for PayChannel (excluded)
     IssueSet,
     TrustSet,
-    Amendment,
-    Fee,
+    EnableAmendment,
+    SetFee,
 }
 
 impl TxType {
@@ -540,15 +543,15 @@ impl TxType {
             Self::Invalid => -1,
             Self::Payment => 0,
             Self::AccountSet => 3,
-            Self::RegularKeySet => 5,
+            Self::SetRegularKey => 5,
             Self::NicknameSet => 6,
             Self::OfferCreate => 7,
             Self::OfferCancel => 8,
             Self::SignerListSet => 12,
             Self::IssueSet => 16,
             Self::TrustSet => 20,
-            Self::Amendment => 100,
-            Self::Fee => 101,
+            Self::EnableAmendment => 100,
+            Self::SetFee => 101,
         }
     }
 
@@ -557,15 +560,16 @@ impl TxType {
             -1 => Some(Self::Invalid),
             0 => Some(Self::Payment),
             3 => Some(Self::AccountSet),
-            5 => Some(Self::RegularKeySet),
+            5 => Some(Self::SetRegularKey),
             6 => Some(Self::NicknameSet),
             7 => Some(Self::OfferCreate),
             8 => Some(Self::OfferCancel),
             12 => Some(Self::SignerListSet),
             16 => Some(Self::IssueSet),
             20 => Some(Self::TrustSet),
-            100 => Some(Self::Amendment),
-            101 => Some(Self::Fee),
+            100 => Some(Self::EnableAmendment),
+            101 => Some(Self::SetFee),
+            // Escrow (1,2,4), Ticket (10,11), PayChannel (13,14,15) excluded
             _ => None,
         }
     }

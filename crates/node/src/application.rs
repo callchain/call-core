@@ -130,6 +130,12 @@ pub struct Application {
     issue_tracker: IssueTracker,
     /// Wallet store for secure key management
     wallet_store: WalletStore,
+    /// Wallet password hash (SHA-256 of password)
+    pub wallet_password_hash: Vec<u8>,
+    /// Whether the wallet is currently locked
+    pub wallet_locked: bool,
+    /// When the wallet unlock expires
+    pub wallet_unlock_time: Option<std::time::Instant>,
     /// Log manager for log rotation
     log_manager: LogManager,
     /// Feature store for protocol feature flags
@@ -563,8 +569,6 @@ impl FeatureStore {
             ("FeatureFix1513", true, "Fix for issue 1513"),
             ("FeatureFix1543", true, "Fix for issue 1543"),
             ("FeatureFlowSort", true, "Flow sort feature"),
-            ("FeaturePaychanAndEscrow", true, "Payment channel and escrow"),
-            ("FeatureTicketBatch", false, "Ticket batching feature"),
         ];
 
         for (name, enabled, desc) in defaults {
@@ -745,6 +749,9 @@ impl Application {
             blacklist,
             issue_tracker,
             wallet_store,
+            wallet_password_hash: Vec::new(),
+            wallet_locked: true,
+            wallet_unlock_time: None,
             log_manager,
             feature_store,
             network_command_tx: None,
