@@ -2301,17 +2301,36 @@ impl RpcHandler for AppRpcHandler {
                 let account = params.get("account")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| JsonRpcError::new(31, "Missing 'account'"))?;
+                let scan = params.get("scan").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                let _account_id = parse_account(account)?;
-                let _app = self.app.read().await;
+                let account_id = parse_account(account)?;
+                let mut app = self.app.write().await;
 
-                // Get issues (disputes/problems) for account
-                // In a real implementation, this would query the issues database
-                let issues: Vec<serde_json::Value> = Vec::new();
+                // Optionally scan for new issues
+                if scan {
+                    app.scan_account_issues(&account_id);
+                }
+
+                // Get issues from tracker
+                let issue_tracker = app.get_issue_tracker();
+                let issues: Vec<serde_json::Value> = issue_tracker
+                    .get_issues(&account_id)
+                    .iter()
+                    .map(|issue| {
+                        serde_json::json!({
+                            "type": issue.issue_type.to_string(),
+                            "description": issue.description,
+                            "created_at": issue.created_at,
+                            "ledger_seq": issue.ledger_seq,
+                            "resolved": issue.resolved,
+                        })
+                    })
+                    .collect();
 
                 Ok(serde_json::json!({
                     "account": account,
                     "issues": issues,
+                    "count": issues.len(),
                     "status": "success",
                 }))
             }

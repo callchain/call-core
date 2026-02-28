@@ -118,6 +118,144 @@ pub struct Application {
     tx_history: TransactionHistory,
     /// Blacklist store for banned peers/accounts
     blacklist: BlacklistStore,
+    /// Issue tracker for account issues/disputes
+    issue_tracker: IssueTracker,
+}
+
+/// Issue tracker for managing account issues and disputes
+#[derive(Debug, Default)]
+pub struct IssueTracker {
+    /// Issues by account
+    issues: HashMap<AccountID, Vec<AccountIssue>>,
+}
+
+/// Account issue types
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssueType {
+    /// Account is frozen
+    Frozen,
+    /// Trust line is frozen
+    FrozenLine,
+    /// No trust line for currency
+    NoTrustLine,
+    /// Negative balance
+    NegativeBalance,
+    /// Offer expired
+    ExpiredOffer,
+    /// General dispute
+    Dispute,
+}
+
+impl std::fmt::Display for IssueType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IssueType::Frozen => write!(f, "frozen"),
+            IssueType::FrozenLine => write!(f, "frozen_line"),
+            IssueType::NoTrustLine => write!(f, "no_trust_line"),
+            IssueType::NegativeBalance => write!(f, "negative_balance"),
+            IssueType::ExpiredOffer => write!(f, "expired_offer"),
+            IssueType::Dispute => write!(f, "dispute"),
+        }
+    }
+}
+
+/// Account issue record
+#[derive(Debug, Clone)]
+pub struct AccountIssue {
+    pub issue_type: IssueType,
+    pub description: String,
+    pub created_at: u64,
+    pub ledger_seq: u32,
+    pub resolved: bool,
+}
+
+impl IssueTracker {
+    pub fn new() -> Self {
+        Self {
+            issues: HashMap::new(),
+        }
+    }
+
+    /// Add an issue for an account
+    pub fn add_issue(&mut self, account: AccountID, issue: AccountIssue) {
+        let account_issues = self.issues.entry(account).or_default();
+        account_issues.push(issue);
+    }
+
+    /// Get all issues for an account
+    pub fn get_issues(&self, account: &AccountID) -> Vec<&AccountIssue> {
+        self.issues.get(account).map(|v| v.iter().collect()).unwrap_or_default()
+    }
+
+    /// Mark an issue as resolved
+    pub fn resolve_issue(&mut self, account: &AccountID, index: usize) -> bool {
+        if let Some(account_issues) = self.issues.get_mut(account) {
+            if let Some(issue) = account_issues.get_mut(index) {
+                issue.resolved = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Clear resolved issues for an account
+    pub fn clear_resolved(&mut self, account: &AccountID) {
+        if let Some(account_issues) = self.issues.get_mut(account) {
+            account_issues.retain(|issue| !issue.resolved);
+        }
+    }
+
+    /// Scan ledger state and detect issues for an account
+    pub fn scan_account_issues(
+        &mut self,
+        account: &AccountID,
+        ledger_state: &protocol::LedgerState,
+        current_ledger: u32,
+    ) -> Vec<AccountIssue> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut detected = Vec::new();
+
+        // Check for expired offers
+        let offers = ledger_state.get_offers_for_account(account);
+        for offer in offers {
+            if let Some(expiration) = offer.expiration {
+                if expiration < current_ledger {
+                    detected.push(AccountIssue {
+                        issue_type: IssueType::ExpiredOffer,
+                        description: format!("Offer expired at ledger {}", expiration),
+                        created_at: now,
+                        ledger_seq: current_ledger,
+                        resolved: false,
+                    });
+                }
+            }
+        }
+
+        // Check for negative balance
+        if let Some(account_root) = ledger_state.get_account_root(account) {
+            if account_root.balance.mantissa < 0 {
+                detected.push(AccountIssue {
+                    issue_type: IssueType::NegativeBalance,
+                    description: format!("Negative balance: {}", account_root.balance.mantissa),
+                    created_at: now,
+                    ledger_seq: current_ledger,
+                    resolved: false,
+                });
+            }
+        }
+
+        // Add detected issues to tracker
+        for issue in &detected {
+            self.add_issue(*account, issue.clone());
+        }
+
+        detected
+    }
 }
 
 /// Blacklist store for managing banned peers and accounts
@@ -234,6 +372,9 @@ impl Application {
         // Initialize blacklist store
         let blacklist = BlacklistStore::new();
 
+        // Initialize issue tracker
+        let issue_tracker = IssueTracker::new();
+
         info!("Application initialized with node_id: {:?}", node_id);
 
         Ok(Self {
@@ -253,6 +394,7 @@ impl Application {
             tx_queue,
             tx_history,
             blacklist,
+            issue_tracker,
         })
     }
 
@@ -305,6 +447,23 @@ impl Application {
     /// Get the blacklist store (mutable)
     pub fn get_blacklist_mut(&mut self) -> &mut BlacklistStore {
         &mut self.blacklist
+    }
+
+    /// Get the issue tracker
+    pub fn get_issue_tracker(&self) -> &IssueTracker {
+        &self.issue_tracker
+    }
+
+    /// Get the issue tracker (mutable)
+    pub fn get_issue_tracker_mut(&mut self) -> &mut IssueTracker {
+        &mut self.issue_tracker
+    }
+
+    /// Scan for account issues and update tracker
+    pub fn scan_account_issues(&mut self, account: &AccountID) -> Vec<AccountIssue> {
+        let ledger_state = &self.ledger_state;
+        let current_ledger = self.current_ledger_seq;
+        self.issue_tracker.scan_account_issues(account, ledger_state, current_ledger)
     }
 
     /// Index a transaction for account history
