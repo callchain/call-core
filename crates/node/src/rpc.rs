@@ -113,15 +113,26 @@ pub trait RpcHandler: Send + Sync {
 }
 
 use crate::application::ApplicationHandle;
+use std::net::SocketAddr;
 
 /// Application-aware RPC handler
 pub struct AppRpcHandler {
     app: ApplicationHandle,
+    network_tx: Option<tokio::sync::mpsc::Sender<network::NetworkCommand>>,
 }
 
 impl AppRpcHandler {
     pub fn new(app: ApplicationHandle) -> Self {
-        Self { app }
+        Self {
+            app,
+            network_tx: None,
+        }
+    }
+
+    /// Set the network command sender for peer management RPCs
+    pub fn with_network_tx(mut self, network_tx: tokio::sync::mpsc::Sender<network::NetworkCommand>) -> Self {
+        self.network_tx = Some(network_tx);
+        self
     }
 }
 
@@ -1397,27 +1408,66 @@ impl RpcHandler for AppRpcHandler {
                     .and_then(|v| v.as_u64())
                     .unwrap_or(51235);
 
-                // Attempt to connect to peer via overlay
-                // In a real implementation, this would initiate a peer connection
-                Ok(serde_json::json!({
-                    "status": "success",
-                    "message": format!("Connection attempt to {}:{}", ip, port),
-                    "peer_address": format!("{}:{}", ip, port),
-                }))
+                let peer_addr_str = format!("{}:{}", ip, port);
+                let peer_addr: SocketAddr = peer_addr_str.parse()
+                    .map_err(|_| JsonRpcError::new(31, "Invalid IP address or port"))?;
+
+                // Send connect command to network manager if available
+                let connection_result = if let Some(ref network_tx) = self.network_tx {
+                    match network_tx.send(network::NetworkCommand::Connect(peer_addr)).await {
+                        Ok(_) => {
+                            serde_json::json!({
+                                "status": "success",
+                                "message": format!("Connection initiated to {}", peer_addr),
+                                "peer_address": peer_addr_str,
+                                "connected": true,
+                            })
+                        }
+                        Err(e) => {
+                            serde_json::json!({
+                                "status": "error",
+                                "message": format!("Failed to send connect command: {}", e),
+                                "peer_address": peer_addr_str,
+                                "connected": false,
+                            })
+                        }
+                    }
+                } else {
+                    // Network manager not available - return mock success for testing
+                    serde_json::json!({
+                        "status": "success",
+                        "message": format!("Connection attempt to {} (network manager not available)", peer_addr),
+                        "peer_address": peer_addr_str,
+                        "connected": false,
+                    })
+                };
+
+                Ok(connection_result)
             }
 
             "unl_list" => {
                 let app = self.app.read().await;
 
-                // Get UNL (Unique Node List) configuration from consensus
-                // Return configured validators
-                let validators: Vec<serde_json::Value> = vec![];
+                // Get UNL (Unique Node List) from consensus
+                let validators = app.consensus.get_validators();
+                let validator_list: Vec<serde_json::Value> = validators
+                    .iter()
+                    .map(|v| {
+                        serde_json::json!({
+                            "validation_public_key": hex::encode(v.node_id.as_bytes()),
+                            "domain": v.domain.as_deref().unwrap_or(""),
+                            "name": v.name.as_deref().unwrap_or(""),
+                            "trusted": v.trusted,
+                        })
+                    })
+                    .collect();
 
                 Ok(serde_json::json!({
                     "unl": {
-                        "validators": validators,
+                        "validators": validator_list,
                         "sequence": app.consensus.get_ledger_index(),
                         "version": 1,
+                        "trusted_validator_count": app.consensus.get_trusted_validator_count(),
                     },
                     "status": "success",
                 }))

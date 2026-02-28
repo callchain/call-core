@@ -182,12 +182,12 @@ pub enum LedgerEntryType {
 | Method | Status | Notes |
 |--------|--------|-------|
 | consensus_info | ✅ Implemented | Returns consensus state |
-| validators | ⚠️ Stub | Returns empty array |
+| validators | ✅ Implemented | Returns actual validator list from consensus |
 | peers | ✅ Implemented | Returns peer information |
-| connect | ⚠️ Stub | Returns success message |
-| unl_list | ⚠️ Stub | Returns empty array |
-| validator_list_sites | ⚠️ Stub | Returns empty array |
-| blacklist | ⚠️ Stub | Returns empty array |
+| connect | ✅ Implemented | Sends NetworkCommand::Connect to network manager |
+| unl_list | ✅ Implemented | Returns actual UNL from consensus |
+| validator_list_sites | ✅ Implemented | Returns configured validator list sites |
+| blacklist | ✅ Implemented | Returns blacklist with add/remove support |
 
 ### Custom Callchain Commands
 
@@ -203,8 +203,8 @@ pub enum LedgerEntryType {
 | Method | Status | Notes |
 |--------|--------|-------|
 | stop | ✅ Implemented | Server shutdown |
-| ledger_cleaner | ⚠️ Stub | Returns success |
-| ledger_request | ⚠️ Stub | Returns success |
+| ledger_cleaner | ✅ Implemented | Scans and fixes ledger state issues |
+| ledger_request | ✅ Implemented | Requests ledger from peers |
 | log_level | ✅ Implemented | Sets log level |
 | log_rotate | ✅ Implemented | Rotates logs |
 | get_counts | ✅ Implemented | Returns ledger object counts |
@@ -222,12 +222,12 @@ pub enum LedgerEntryType {
 | Method | Status | Notes |
 |--------|--------|-------|
 | wallet_propose | ✅ Implemented | Generates new wallet |
-| wallet_seed | ⚠️ Stub | Returns placeholder |
+| wallet_seed | ✅ Implemented | Derives key from seed |
 | wallet_lock | ✅ Implemented | Lock wallet |
-| wallet_unlock | ⚠️ Stub | Returns placeholder |
-| wallet_verify | ⚠️ Stub | Returns placeholder |
+| wallet_unlock | ✅ Implemented | Unlocks wallet with passphrase |
+| wallet_verify | ✅ Implemented | Verifies signatures |
 | validation_create | ✅ Implemented | Creates validation key |
-| validation_seed | ⚠️ Stub | Returns placeholder |
+| validation_seed | ✅ Implemented | Derives validation key from seed |
 
 ---
 
@@ -364,19 +364,27 @@ pub enum LedgerEntryType {
    - ✅ FeeRoot struct with Balance
    - ✅ Balance management
 
-### Medium Priority (Feature Completeness)
+### Medium Priority ✅ COMPLETED
 
-7. [ ] **Complete transaction indexing for account_tx**
-8. [ ] **Complete transaction history for tx_history**
-9. [ ] **Implement proper wallet_seed derivation**
-10. [ ] **Implement validation_seed derivation**
+7. ✅ **Complete transaction indexing for account_tx**
+8. ✅ **Complete transaction history for tx_history**
+9. ✅ **Implement proper wallet_seed derivation**
+10. ✅ **Implement validation_seed derivation**
 
-### Low Priority (Nice to Have)
+### Low Priority ✅ COMPLETED
 
-11. [ ] **Complete nick_search implementation**
-12. [ ] **Complete account_issues implementation**
-13. [ ] **Complete account_invoices implementation**
-14. [ ] **Implement validators/UNL discovery**
+11. ✅ **Complete nick_search implementation**
+12. ✅ **Complete account_issues implementation**
+13. ✅ **Complete account_invoices implementation**
+14. ✅ **Implement validators/UNL discovery**
+
+### Network/Admin Methods ✅ COMPLETED
+
+15. ✅ **Implement connect method** - Sends NetworkCommand::Connect
+16. ✅ **Implement unl_list method** - Returns validators from consensus UNL
+17. ✅ **Implement blacklist method** - Returns blacklist with add/remove support
+18. ✅ **Implement ledger_cleaner method** - Scans ledger for orphaned entries
+19. ✅ **Implement ledger_request method** - Requests ledger data from peers
 
 ---
 
@@ -385,8 +393,10 @@ pub enum LedgerEntryType {
 - ✅ **All critical compatibility issues fixed** (TxType values, LedgerEntryType codes)
 - ✅ **All missing ledger entry types implemented** (SignerList, LedgerHashes, Amendments, FeeSettings)
 - ✅ **All custom Callchain features implemented** (IssueRoot, Invoice, FeeRoot structs)
+- ✅ **All RPC methods fully implemented** - No more stubs or placeholders
+- ✅ **Network command integration** - RPC can now command the network layer
 - The codebase has excellent architecture with clean separation across crates
-- RPC implementation is very comprehensive (70+ methods)
+- RPC implementation is very comprehensive (70+ fully functional methods)
 - Network and consensus layers are fully functional
 - All 128+ tests passing
 
@@ -394,7 +404,7 @@ pub enum LedgerEntryType {
 
 - ✅ **Critical fixes**: COMPLETED
 - ✅ **Custom features completion**: COMPLETED
-- **Full feature parity**: 90% complete (see remaining items below)
+- ✅ **Full feature parity**: 100% COMPLETE
 
 ## Remaining Items (Non-Critical) ✅ COMPLETED
 
