@@ -20,6 +20,13 @@ pub struct AccountTxRecord {
     pub tx_type: protocol::TxType,
 }
 
+/// Node state data for persistence
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NodeStateData {
+    pub ledger_hash: primitives::UInt256,
+    pub ledger_seq: u32,
+}
+
 /// Transaction history manager for account_tx and tx_history
 #[derive(Debug, Default)]
 pub struct TransactionHistory {
@@ -873,6 +880,82 @@ impl Application {
         self.tx_history.index_transaction(account, record);
     }
 
+    /// Save node state to disk
+    fn save_node_state(&self) {
+        use std::fs;
+
+        let state_file = format!("{}/node_state.json", self.config.data_dir);
+        let state = NodeStateData {
+            ledger_hash: self.current_ledger_hash,
+            ledger_seq: self.current_ledger_seq,
+        };
+
+        match serde_json::to_string_pretty(&state) {
+            Ok(json) => {
+                if let Err(e) = fs::write(&state_file, json) {
+                    warn!("Failed to save node state to {}: {}", state_file, e);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to serialize node state: {}", e);
+            }
+        }
+    }
+
+    /// Load node state from disk
+    fn load_node_state(&self) -> Option<(primitives::UInt256, u32)> {
+        use std::fs;
+
+        let state_file = format!("{}/node_state.json", self.config.data_dir);
+
+        match fs::read_to_string(&state_file) {
+            Ok(content) => {
+                match serde_json::from_str::<NodeStateData>(&content) {
+                    Ok(state) => {
+                        info!("Loaded node state: ledger {} with hash {}",
+                              state.ledger_seq, state.ledger_hash.to_hex());
+                        Some((state.ledger_hash, state.ledger_seq))
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse node state: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(_) => {
+                debug!("No saved node state found");
+                None
+            }
+        }
+    }
+
+    /// Load ledger state from database
+    fn load_ledger_state(&mut self) -> bool {
+        // Try to load the ledger state from the database
+        // This is a placeholder - full implementation would:
+        // 1. Load the last ledger hash from node_state.json
+        // 2. Load all ledger entries from the database
+        // 3. Reconstruct the SHAMap from stored nodes
+
+        if let Some((ledger_hash, ledger_seq)) = self.load_node_state() {
+            info!("Attempting to load ledger {} from database", ledger_seq);
+
+            // Try to load ledger state from database
+            let loaded = self.ledger_state.load_from_database(&self.database, ledger_hash);
+
+            if loaded {
+                self.current_ledger_hash = ledger_hash;
+                self.current_ledger_seq = ledger_seq;
+                info!("Successfully loaded ledger {} from database", ledger_seq);
+                return true;
+            } else {
+                warn!("Failed to load ledger from database, will use genesis");
+            }
+        }
+
+        false
+    }
+
     /// Start the application
     pub async fn start(&mut self) -> anyhow::Result<()> {
         info!("Starting Call Core node: {}", self.config.node_name);
@@ -911,7 +994,12 @@ impl Application {
         info!("Initializing ledger...");
 
         // Try to load the latest ledger from database
-        // For now, create genesis ledger
+        if self.load_ledger_state() {
+            info!("Loaded existing ledger state from disk");
+            return Ok(());
+        }
+
+        // No saved state, create genesis ledger
         let genesis = protocol::Ledger::genesis();
         let genesis_hash = genesis.get_hash();
         let genesis_seq = genesis.get_seq();
@@ -935,6 +1023,9 @@ impl Application {
             "close_time": genesis.info.close_time,
         }))?;
         self.database.store_ledger(genesis_hash, ledger_data);
+
+        // Save node state
+        self.save_node_state();
 
         info!("Stored genesis ledger in database");
 
@@ -1021,6 +1112,7 @@ impl Application {
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs() as u32;
+
                     // Create a transaction set hash from pending transactions
                     // For now, use the current ledger hash as the transaction set hash
                     let tx_set_hash = self.current_ledger_hash;
@@ -1035,7 +1127,10 @@ impl Application {
                 }
             }
             ConsensusPhase::Processing => {
-                // Process accepted transactions and create validation
+                // Process accepted transactions - apply queued transactions to ledger
+                self.process_ledger_transactions()?;
+
+                // Move consensus forward after processing
                 self.consensus.process_ledger()?;
             }
             ConsensusPhase::Accepted => {
@@ -1048,6 +1143,146 @@ impl Application {
         }
 
         Ok(())
+    }
+
+    /// Process transactions from the queue and apply them to the ledger
+    fn process_ledger_transactions(&mut self) -> anyhow::Result<()> {
+        use protocol::views::MutableLedgerView;
+        use protocol::ledger::LedgerInfo;
+        use protocol::tx_engine::{TransactionEngine, ApplyContext, ApplyRules};
+
+        info!("Processing {} queued transactions", self.tx_queue.len());
+
+        // Create transaction engine
+        let engine = TransactionEngine::new();
+
+        // Track transaction hashes for computing the new ledger hash
+        let mut tx_hashes: Vec<primitives::UInt256> = Vec::new();
+
+        // Process transactions from queue directly
+        let mut applied_count = 0;
+
+        while let Some(queued) = self.tx_queue.pop_highest_fee() {
+            // Create a mutable view of the ledger state for each transaction
+            let ledger_info = LedgerInfo {
+                hash: self.current_ledger_hash,
+                seq: self.current_ledger_seq,
+                ..Default::default()
+            };
+
+            // Create the mutable ledger view
+            let mut view = MutableLedgerView::new(&mut self.ledger_state, ledger_info);
+
+            // Create apply context
+            let mut ctx = ApplyContext {
+                ledger: &mut view,
+                rules: ApplyRules::default(),
+                ledger_seq: self.current_ledger_seq + 1,
+                parent_ledger_hash: self.current_ledger_hash,
+            };
+
+            // Apply transaction
+            let result = engine.process(&mut ctx, &queued.transaction);
+
+            // Count successful applications and track the transaction hash
+            if result.ter.is_success() {
+                applied_count += 1;
+                tx_hashes.push(queued.transaction.get_hash());
+            }
+        }
+
+        info!("Applied {} transactions to ledger", applied_count);
+
+        // Update ledger sequence
+        self.current_ledger_seq += 1;
+
+        // Compute the new ledger hash
+        // This includes the parent hash, transaction hash, account hash, and close time
+        let account_hash = self.ledger_state.get_root_hash();
+        let tx_hash = Self::compute_transaction_hash(&tx_hashes);
+
+        // Create new ledger info and compute its hash
+        let mut new_ledger_info = protocol::LedgerInfo {
+            seq: self.current_ledger_seq,
+            parent_hash: self.current_ledger_hash,
+            account_hash,
+            tx_hash,
+            close_time: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as u32,
+            ..Default::default()
+        };
+        new_ledger_info.hash = Self::compute_ledger_header_hash(&new_ledger_info);
+
+        self.current_ledger_hash = new_ledger_info.hash;
+
+        // Persist the ledger state to the database
+        self.ledger_state.persist_to_database(&self.database);
+
+        // Persist node state (ledger hash and sequence)
+        self.save_node_state();
+
+        info!(
+            "Closed ledger {} with hash {} and {} transactions",
+            self.current_ledger_seq,
+            self.current_ledger_hash.to_hex(),
+            applied_count
+        );
+
+        Ok(())
+    }
+
+    /// Compute the transaction hash from a list of transaction hashes
+    fn compute_transaction_hash(tx_hashes: &[primitives::UInt256]) -> primitives::UInt256 {
+        use crypto::sha512_half;
+
+        if tx_hashes.is_empty() {
+            return sha512_half(b"");
+        }
+
+        // Build a simple Merkle tree of transactions
+        let mut hashes: Vec<primitives::UInt256> = tx_hashes.to_vec();
+
+        while hashes.len() > 1 {
+            let mut next_level = Vec::new();
+            for chunk in hashes.chunks(2) {
+                let mut data = Vec::new();
+                data.extend_from_slice(chunk[0].as_bytes());
+                if chunk.len() > 1 {
+                    data.extend_from_slice(chunk[1].as_bytes());
+                } else {
+                    // Duplicate the last hash if odd number
+                    data.extend_from_slice(chunk[0].as_bytes());
+                }
+                next_level.push(sha512_half(&data));
+            }
+            hashes = next_level;
+        }
+
+        hashes[0]
+    }
+
+    /// Compute the ledger header hash from ledger info
+    fn compute_ledger_header_hash(info: &protocol::LedgerInfo) -> primitives::UInt256 {
+        use serialization::Serializer;
+        use crypto::sha512_half;
+
+        // Serialize ledger header data
+        let mut serializer = Serializer::with_capacity(256);
+        serializer.add32(0x524C3344); // 'RL3D' - ledger master prefix
+        serializer.add32(info.seq);
+        serializer.add32(info.close_time);
+        serializer.add32(info.parent_close_time);
+        serializer.add32(info.close_time_resolution as u32);
+        serializer.add8(info.close_flags);
+        serializer.add64(info.drops);
+        serializer.add256(info.parent_hash);
+        serializer.add256(info.tx_hash);
+        serializer.add256(info.account_hash);
+
+        // Compute the hash
+        sha512_half(serializer.as_slice())
     }
 
     /// Process network messages

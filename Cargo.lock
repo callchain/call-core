@@ -1629,6 +1629,7 @@ dependencies = [
  "serde_json",
  "serialization",
  "shamap",
+ "storage",
  "thiserror",
  "tracing",
 ]

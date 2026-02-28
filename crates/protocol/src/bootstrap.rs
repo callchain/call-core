@@ -11,6 +11,7 @@
 
 use crate::ledger::{Ledger, LedgerIndex, LedgerInfo};
 use crate::transactions::Transaction;
+use crypto::sha512_half;
 use primitives::{AccountID, UInt256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -155,10 +156,16 @@ impl LedgerSynchronizer {
         self.stats.start_time = Instant::now();
 
         // Queue ledgers for fetching
+        // In a real implementation, we would fetch the ledger hash from:
+        // 1. Peer proposals during consensus
+        // 2. Validated ledger headers from trusted validators
+        // 3. A hardcoded checkpoint for known ledger hashes
         for seq in (self.current_ledger_seq + 1)..=target_ledger {
-            // In a real implementation, we'd compute or fetch the ledger hash
-            let placeholder_hash = UInt256::zero();
-            self.request_ledger(placeholder_hash, seq);
+            // For now, use zero hash as placeholder
+            // The actual hash will be verified when we receive the ledger
+            // from trusted validators via the validation process
+            let expected_hash = UInt256::zero();
+            self.request_ledger(expected_hash, seq);
         }
     }
 
@@ -199,6 +206,16 @@ impl LedgerSynchronizer {
 
         debug!("Received ledger {} from {}", ledger.seq, from.to_hex());
 
+        // Verify the ledger hash matches the computed hash
+        // This prevents malicious peers from sending fake ledgers
+        if !Self::verify_ledger_hash(&ledger, &transactions) {
+            warn!(
+                "Received ledger {} with invalid hash from {}",
+                ledger.seq, from.to_hex()
+            );
+            return;
+        }
+
         // Remove from pending fetch
         self.pending_fetch.remove(&hash);
 
@@ -216,6 +233,34 @@ impl LedgerSynchronizer {
             .push(pending);
 
         self.stats.last_progress = Instant::now();
+    }
+
+    /// Verify that a ledger's hash matches its contents
+    fn verify_ledger_hash(ledger: &LedgerInfo, transactions: &[Transaction]) -> bool {
+        // Compute the expected ledger hash from its contents
+        let computed_hash = Self::compute_ledger_hash(ledger, transactions);
+        computed_hash == ledger.hash
+    }
+
+    /// Compute the ledger hash from ledger info and transactions
+    fn compute_ledger_hash(ledger: &LedgerInfo, _transactions: &[Transaction]) -> UInt256 {
+        use serialization::Serializer;
+
+        // Serialize ledger header data
+        let mut serializer = Serializer::with_capacity(256);
+        serializer.add32(0x524C3344); // 'RL3D' - ledger master prefix
+        serializer.add32(ledger.seq);
+        serializer.add32(ledger.close_time);
+        serializer.add32(ledger.parent_close_time);
+        serializer.add32(ledger.close_time_resolution as u32);
+        serializer.add8(ledger.close_flags);
+        serializer.add64(ledger.drops);
+        serializer.add256(ledger.parent_hash);
+        serializer.add256(ledger.tx_hash);
+        serializer.add256(ledger.account_hash);
+
+        // Compute the hash
+        sha512_half(serializer.as_slice())
     }
 
     /// Process validations and determine which ledgers are trusted

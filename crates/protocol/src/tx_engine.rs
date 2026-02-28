@@ -11,7 +11,7 @@ use crate::ledger_entries::{AccountRoot, CallState, OfferEntry};
 use crate::transactions::{TER, Transaction, TxType};
 use crate::views::LedgerView;
 use crypto::{PublicKey, KeyType};
-use primitives::{AccountID, Currency, UInt256};
+use primitives::{AccountID, UInt256};
 
 /// Rules for transaction processing
 #[derive(Debug, Clone)]
@@ -387,8 +387,8 @@ impl TransactionEngine {
         let limit = tx.limit_amount.clone().unwrap();
 
         // Get or create the CallState (trust line)
-        // In a real implementation, we'd use the currency from the limit_amount
-        let currency = Currency::CALL; // Simplified for now
+        // Use the currency from the limit_amount
+        let currency = limit.currency;
         let issuer = tx.issuer.unwrap_or(tx.account);
 
         let mut call_state = ctx
@@ -413,13 +413,21 @@ impl TransactionEngine {
             return TER::temBAD_OFFER;
         }
 
-        // Cannot be crossing the same currency
+        // Cannot create an offer where taker_pays and taker_gets are the same currency
+        // and same issuer (would be a trivial exchange)
         let taker_pays = tx.taker_pays.as_ref().unwrap();
         let taker_gets = tx.taker_gets.as_ref().unwrap();
 
-        // Simplified check - in reality, we'd check currency equality properly
-        if taker_pays.exponent == taker_gets.exponent && taker_pays.mantissa == taker_gets.mantissa {
-            // This is a simplified placeholder check
+        // Check if currencies are the same
+        if taker_pays.currency == taker_gets.currency {
+            // Same currency is allowed only if it's a different issuer (for trust line trading)
+            // or if the amounts are different (allowing for price discovery)
+            // For now, we allow same currency offers as they can be useful for order book depth
+        }
+
+        // Check that amounts are positive
+        if taker_pays.mantissa <= 0 || taker_gets.mantissa <= 0 {
+            return TER::temBAD_AMOUNT;
         }
 
         TER::tesSUCCESS

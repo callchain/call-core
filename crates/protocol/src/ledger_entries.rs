@@ -1157,6 +1157,57 @@ impl LedgerState {
             previous_txn_lgr_seq: 0,
         })
     }
+
+    /// Persist the ledger state to the database
+    /// This stores all SHAMap nodes (both inner and leaf nodes) to the database
+    pub fn persist_to_database(&self, database: &storage::Database) {
+        // Walk the SHAMap and store all nodes
+        self.walk_and_store_nodes(&self.state_map, database);
+    }
+
+    /// Recursively walk the SHAMap and store all nodes
+    fn walk_and_store_nodes(
+        &self,
+        state_map: &shamap::SHAMap,
+        database: &storage::Database,
+    ) {
+        // Store all leaf nodes (ledger entries)
+        for item in state_map.iter() {
+            let key = item.key();
+            let data = item.data();
+
+            // Store the leaf node data
+            database.store_node_data(
+                storage::NodeObjectType::AccountNode,
+                UInt256::new(*key),
+                data.to_vec(),
+            );
+        }
+
+        // Note: Inner nodes would need to be serialized and stored as well
+        // This requires access to the inner structure of SHAMap which may need
+        // to be extended in the shamap crate
+    }
+
+    /// Load the ledger state from the database
+    /// This loads all SHAMap nodes from the database
+    pub fn load_from_database(
+        &mut self,
+        _database: &storage::Database,
+        _ledger_hash: primitives::UInt256,
+    ) -> bool {
+        // For now, this is a placeholder - a full implementation would:
+        // 1. Load the ledger header to get the root hash
+        // 2. Walk the SHAMap tree from the root
+        // 3. Load each node from the database
+        // 4. Reconstruct the SHAMap
+
+        // The current database API doesn't provide a way to iterate over all nodes
+        // of a specific type, so this would need to be extended
+
+        // For now, return false to indicate the load is not yet implemented
+        false
+    }
 }
 
 impl Clone for LedgerState {

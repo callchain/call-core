@@ -81,3 +81,57 @@ impl LedgerView for BasicLedgerView {
         LedgerInfo::default()
     }
 }
+
+use crate::ledger_entries::LedgerState;
+
+/// Ledger view implementation that wraps a mutable LedgerState reference
+/// This is used during transaction processing to apply changes to the actual ledger
+pub struct MutableLedgerView<'a> {
+    state: &'a mut LedgerState,
+    ledger_info: LedgerInfo,
+}
+
+impl<'a> MutableLedgerView<'a> {
+    pub fn new(state: &'a mut LedgerState, ledger_info: LedgerInfo) -> Self {
+        Self { state, ledger_info }
+    }
+}
+
+impl<'a> LedgerView for MutableLedgerView<'a> {
+    fn get_account_root(&self, account: &AccountID) -> Option<AccountRoot> {
+        self.state.get_account_root(account)
+    }
+
+    fn set_account_root(&mut self, account: &AccountRoot) {
+        self.state.set_account_root(account);
+    }
+
+    fn get_call_state(
+        &self,
+        account: &AccountID,
+        issuer: &AccountID,
+        currency: &Currency,
+    ) -> Option<CallState> {
+        self.state.get_call_state(account, issuer, currency)
+    }
+
+    fn set_call_state(&mut self, state: &CallState) {
+        self.state.set_call_state(state);
+    }
+
+    fn get_offer(&self, account: &AccountID, sequence: u32) -> Option<OfferEntry> {
+        self.state.get_offer(account, sequence)
+    }
+
+    fn set_offer(&mut self, offer: &OfferEntry) {
+        self.state.set_offer(offer);
+    }
+
+    fn delete_offer(&mut self, account: &AccountID, sequence: u32) {
+        self.state.delete_offer(account, sequence);
+    }
+
+    fn get_ledger_info(&self) -> LedgerInfo {
+        self.ledger_info.clone()
+    }
+}

@@ -9,6 +9,7 @@ primitives = { path = "../primitives" }
 crypto = { path = "../crypto" }
 serialization = { path = "../serialization" }
 shamap = { path = "../shamap" }
+storage = { path = "../storage" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
