@@ -250,21 +250,13 @@ async fn start_node(config: Config) -> anyhow::Result<()> {
     info!("RPC port: {}", config.rpc_port);
     info!("Validator mode: {}", config.is_validator());
 
-    let mut app = Application::new(config)?;
+    let app = Application::new(config)?;
 
     // Handle shutdown gracefully
-    let ctrl_c = tokio::signal::ctrl_c();
-
-    tokio::select! {
-        result = app.run() => {
-            if let Err(e) = result {
-                error!("Application error: {}", e);
-            }
-        }
-        _ = ctrl_c => {
-            info!("Received shutdown signal");
-            app.shutdown().await;
-        }
+    // Note: Application::run now takes self by value, so we run it directly
+    // Shutdown handling is done internally via signal handlers
+    if let Err(e) = app.run().await {
+        error!("Application error: {}", e);
     }
 
     Ok(())

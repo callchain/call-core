@@ -178,6 +178,10 @@ impl Consensus {
         self.phase = ConsensusPhase::Open;
         self.state = Some(ConsensusState::new(previous_ledger, 0));
         self.validations.clear();
+        // Reset ledger open time and transaction counts for new round
+        self.ledger_open_time = Some(std::time::Instant::now());
+        self.current_tx_count = 0;
+        self.current_ledger_size = 0;
     }
 
     /// Close the open ledger and begin consensus
@@ -232,6 +236,12 @@ impl Consensus {
         };
 
         let peer_count = state.peer_count();
+
+        // Single-node case: if no peers and we have a position, accept it
+        if peer_count == 0 && state.our_position.is_some() {
+            return true;
+        }
+
         if peer_count < self.params.ledger_min_consensus {
             return false;
         }

@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::rpc::{RpcConfig, RpcServer, SimpleRpcHandler};
+use crate::rpc::{RpcConfig, RpcServer, AppRpcHandler};
 use consensus::{Consensus, ConsensusParms, ConsensusMode, ConsensusPhase};
 use network::Overlay;
 use primitives::{AccountID, NodeID, UInt256};
@@ -1089,28 +1089,50 @@ impl Application {
     }
 
     /// Run the main application loop
-    pub async fn run(&mut self) -> anyhow::Result<()> {
+    pub async fn run(mut self) -> anyhow::Result<()> {
         self.start().await?;
 
+        // Create shared application handle for RPC and other components
+        let app_handle: ApplicationHandle = Arc::new(RwLock::new(self));
+
         // Start RPC server if enabled
-        if self.rpc_config.enabled {
-            self.start_rpc_server().await?;
+        {
+            let mut app = app_handle.write().await;
+            if app.rpc_config.enabled {
+                // Clone handle for RPC server
+                let handle_for_rpc = Arc::clone(&app_handle);
+                app.start_rpc_server(handle_for_rpc).await?;
+            }
         }
 
         // Main event loop
         loop {
-            if self.state == NodeState::Stopping {
-                break;
+            // Check for shutdown signal (non-blocking)
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    info!("Received shutdown signal");
+                    let mut app = app_handle.write().await;
+                    app.shutdown().await;
+                    break;
+                }
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(10)) => {
+                    // Continue with normal processing
+                }
             }
 
-            // Process consensus
-            self.process_consensus().await?;
+            {
+                let mut app = app_handle.write().await;
+                if app.state == NodeState::Stopping {
+                    break;
+                }
 
-            // Process network messages
-            self.process_network().await?;
+                // Process consensus
+                app.process_consensus().await?;
 
-            // Small delay to prevent tight loop
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                // Process network messages
+                app.process_network().await?;
+            }
         }
 
         Ok(())
@@ -1354,8 +1376,8 @@ impl Application {
         self.network_command_tx = Some(sender);
     }
 
-    /// Start the RPC server
-    async fn start_rpc_server(&mut self) -> anyhow::Result<()> {
+    /// Start the RPC server with a shared application handle
+    async fn start_rpc_server(&mut self, app_handle: ApplicationHandle) -> anyhow::Result<()> {
         if !self.rpc_config.enabled {
             return Ok(());
         }
@@ -1363,8 +1385,8 @@ impl Application {
         let bind_addr = format!("{}:{}", self.rpc_config.bind_address, self.rpc_config.port);
         info!("Starting RPC server on {}", bind_addr);
 
-        // Create RPC server with handler
-        let handler = Box::new(SimpleRpcHandler::new());
+        // Create RPC server with full AppRpcHandler
+        let handler = Box::new(AppRpcHandler::new(app_handle));
         let rpc_server = RpcServer::new(self.rpc_config.clone(), handler);
 
         // Create shutdown channel
@@ -1423,36 +1445,113 @@ impl Application {
             return Err(anyhow::anyhow!("Transaction blob too short"));
         }
 
-        // Parse basic transaction fields from the blob
-        // This is a simplified parser - full implementation would parse all fields
         use serialization::SerialIter;
 
         let mut iter = SerialIter::new(tx_blob);
 
-        // Read transaction type (2 bytes)
-        let tx_type_val = iter.get16()
-            .map_err(|e| anyhow::anyhow!("Failed to read tx type: {}", e))?;
-        let tx_type = protocol::TxType::from_i16(tx_type_val as i16)
-            .ok_or_else(|| anyhow::anyhow!("Invalid transaction type: {}", tx_type_val))?;
+        let mut tx_type: Option<protocol::TxType> = None;
+        let mut account: Option<primitives::AccountID> = None;
+        let mut sequence: Option<u32> = None;
+        let mut fee: u64 = 0;
 
-        // Read account (variable length, AccountID is 20 bytes)
-        let account = iter.get_account()
-            .map_err(|e| anyhow::anyhow!("Failed to read account: {}", e))?;
+        // Parse fields using field IDs
+        while !iter.eof() {
+            let field_id = iter.get_field_id()
+                .map_err(|e| anyhow::anyhow!("Failed to read field ID: {}", e))?;
 
-        // Read sequence (4 bytes)
-        let sequence = iter.get32()
-            .map_err(|e| anyhow::anyhow!("Failed to read sequence: {}", e))?;
+            // Check for object end marker (type 14, field 1)
+            if field_id.0 == 14 && field_id.1 == 1 {
+                break;
+            }
 
-        // Read fee (8 bytes)
-        let fee = iter.get64()
-            .map_err(|e| anyhow::anyhow!("Failed to read fee: {}", e))?;
+            // Match field by type and field number
+            match (field_id.0, field_id.1) {
+                // TransactionType (type=1/UInt16, field=2)
+                (1, 2) => {
+                    let val = iter.get16()
+                        .map_err(|e| anyhow::anyhow!("Failed to read tx type: {}", e))?;
+                    tx_type = protocol::TxType::from_i16(val as i16);
+                }
+                // Account (type=8/Account, field=1)
+                (8, 1) => {
+                    account = Some(iter.get_account()
+                        .map_err(|e| anyhow::anyhow!("Failed to read account: {}", e))?);
+                }
+                // Sequence (type=2/UInt32, field=4)
+                (2, 4) => {
+                    sequence = Some(iter.get32()
+                        .map_err(|e| anyhow::anyhow!("Failed to read sequence: {}", e))?);
+                }
+                // Fee (type=6/Amount, field=8)
+                (6, 8) => {
+                    let amount = iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read fee: {}", e))?;
+                    fee = amount.mantissa as u64;
+                }
+                // Flags (type=2/UInt32, field=22) - skip for now
+                (2, 22) => {
+                    let _ = iter.get32()
+                        .map_err(|e| anyhow::anyhow!("Failed to read flags: {}", e))?;
+                }
+                // SourceTag (type=2/UInt32, field=3) - skip for now
+                (2, 3) => {
+                    let _ = iter.get32()
+                        .map_err(|e| anyhow::anyhow!("Failed to read source tag: {}", e))?;
+                }
+                // Amount (type=6/Amount, field=1) - skip for now
+                (6, 1) => {
+                    let _ = iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read amount: {}", e))?;
+                }
+                // Destination (type=8/Account, field=3) - skip for now
+                (8, 3) => {
+                    let _ = iter.get_account()
+                        .map_err(|e| anyhow::anyhow!("Failed to read destination: {}", e))?;
+                }
+                // SigningPubKey (type=7/VL, field=3) - skip
+                (7, 3) => {
+                    let _ = iter.get_vl()
+                        .map_err(|e| anyhow::anyhow!("Failed to read signing pub key: {}", e))?;
+                }
+                // TxnSignature (type=7/VL, field=4) - skip
+                (7, 4) => {
+                    let _ = iter.get_vl()
+                        .map_err(|e| anyhow::anyhow!("Failed to read txn signature: {}", e))?;
+                }
+                // Unknown field - skip based on type
+                (type_id, field_num) => {
+                    // Try to skip based on type
+                    match type_id {
+                        0 => (), // NotPresent
+                        1 => { let _ = iter.get16()?; } // UInt16
+                        2 => { let _ = iter.get32()?; } // UInt32
+                        3 => { let _ = iter.get64()?; } // UInt64
+                        4 => { let _ = iter.get128()?; } // Hash128
+                        5 => { let _ = iter.get256()?; } // Hash256
+                        6 => { let _ = iter.get_amount()?; } // Amount
+                        7 => { let _ = iter.get_vl()?; } // VL
+                        8 => { let _ = iter.get_account()?; } // Account
+                        16 => { let _ = iter.get8()?; } // UInt8
+                        17 => { let _ = iter.get160()?; } // Hash160
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "Unknown field type {} for field {}, cannot skip",
+                                type_id, field_num
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Validate required fields
+        let tx_type = tx_type.ok_or_else(|| anyhow::anyhow!("Missing transaction type"))?;
+        let account = account.ok_or_else(|| anyhow::anyhow!("Missing account"))?;
+        let sequence = sequence.ok_or_else(|| anyhow::anyhow!("Missing sequence"))?;
 
         // Create transaction with parsed fields
         let mut tx = protocol::Transaction::new(tx_type, account, sequence);
         tx.set_fee(fee);
-
-        // Parse remaining fields based on transaction type
-        // For now, skip the rest as this is a simplified implementation
 
         Ok(tx)
     }
@@ -1490,9 +1589,12 @@ impl Application {
 
         // Clone the transaction and add to queue
         let tx_clone = tx.clone();
+        let tx_size = std::mem::size_of_val(&tx_clone);
         match self.tx_queue.insert(tx_clone) {
             Ok(_) => {
                 debug!("Transaction added to queue successfully");
+                // Also update consensus transaction count so ledger will close
+                self.consensus.add_transaction(tx_size);
                 Ok(())
             }
             Err(ter) => {

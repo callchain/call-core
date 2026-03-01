@@ -139,6 +139,8 @@ impl AppRpcHandler {
 
     /// Handle the `sign` RPC method
     async fn handle_sign(&self, params: Option<serde_json::Value>) -> Result<serde_json::Value, JsonRpcError> {
+        use serialization::{Serializer, types::{STObject, STValue, sf}};
+
         let params = params.ok_or(JsonRpcError::invalid_params())?;
         let secret = params
             .get("secret")
@@ -151,22 +153,85 @@ impl AppRpcHandler {
         // Derive private key from secret
         let private_key = self.derive_private_key(secret)?;
 
-        // Serialize transaction from tx_json
+        // Get the public key for SigningPubKey field
+        let public_key = private_key.to_public_key();
+        let public_key_bytes = public_key.as_bytes();
+
+        // Serialize transaction from tx_json (without signature)
         let tx_bytes = self.serialize_tx_json(tx_json)?;
 
-        // Sign the transaction
+        // Sign the transaction hash (prefix + tx_bytes)
+        // The signature is computed over the hash of the serialized transaction
         let signature = private_key.sign(&tx_bytes);
+        let signature_bytes = signature.as_bytes();
 
-        // Build signed transaction blob: tx_bytes + signature
-        let mut signed_tx = tx_bytes.clone();
-        signed_tx.extend_from_slice(signature.as_bytes());
+        // Build the signed transaction by adding SigningPubKey and TxnSignature fields
+        // We need to re-serialize with these fields included
+        let mut obj = STObject::new();
 
-        let tx_blob = hex::encode(&signed_tx);
+        // Copy fields from original tx_json
+        if let Some(tx_type_str) = tx_json.get("TransactionType").and_then(|v| v.as_str()) {
+            let tx_type = match tx_type_str {
+                "Payment" => 0u16,
+                "AccountSet" => 3u16,
+                "SetRegularKey" => 5u16,
+                "OfferCreate" => 7u16,
+                "OfferCancel" => 8u16,
+                "SignerListSet" => 12u16,
+                "IssueSet" => 16u16,
+                "TrustSet" => 20u16,
+                _ => return Err(JsonRpcError::new(31, format!("Unknown transaction type: {}", tx_type_str))),
+            };
+            obj.insert(sf::TRANSACTION_TYPE, STValue::UInt16(tx_type));
+        }
+
+        if let Some(account_str) = tx_json.get("Account").and_then(|v| v.as_str()) {
+            let account = parse_account(account_str)?;
+            obj.insert(sf::ACCOUNT, STValue::Account(account));
+        }
+
+        if let Some(sequence) = tx_json.get("Sequence").and_then(|v| v.as_u64()) {
+            obj.insert(sf::SEQUENCE, STValue::UInt32(sequence as u32));
+        }
+
+        if let Some(fee) = tx_json.get("Fee").and_then(|v| v.as_str()) {
+            let fee_drops: u64 = fee.parse().map_err(|_| JsonRpcError::new(31, "Invalid Fee"))?;
+            let fee_amount = serialization::types::Amount::call(fee_drops);
+            obj.insert(sf::FEE, STValue::Amount(fee_amount));
+        }
+
+        if let Some(dest_str) = tx_json.get("Destination").and_then(|v| v.as_str()) {
+            let dest = parse_account(dest_str)?;
+            obj.insert(sf::DESTINATION, STValue::Account(dest));
+        }
+
+        if let Some(amount_val) = tx_json.get("Amount") {
+            if let Some(amount_str) = amount_val.as_str() {
+                let amount_drops: u64 = amount_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid Amount"))?;
+                let amount = serialization::types::Amount::call(amount_drops);
+                obj.insert(sf::AMOUNT, STValue::Amount(amount));
+            }
+        }
+
+        // Add SigningPubKey
+        obj.insert(sf::SIGNING_PUB_KEY, STValue::VL(public_key_bytes.to_vec()));
+
+        // Add TxnSignature
+        obj.insert(sf::TXN_SIGNATURE, STValue::VL(signature_bytes.to_vec()));
+
+        // Serialize the complete signed transaction
+        let mut serializer = Serializer::new();
+        serializer.add_object(&obj).map_err(|e| {
+            JsonRpcError::new(31, format!("Serialization error: {}", e))
+        })?;
+
+        let signed_tx_bytes = serializer.finish();
+        let tx_blob = hex::encode(&signed_tx_bytes);
 
         // Return response with tx_blob and updated tx_json
         let mut signed_tx_json = tx_json.clone();
         if let Some(obj) = signed_tx_json.as_object_mut() {
-            obj.insert("TxnSignature".to_string(), serde_json::json!(hex::encode(signature.as_bytes())));
+            obj.insert("TxnSignature".to_string(), serde_json::json!(hex::encode(signature_bytes)));
         }
 
         Ok(serde_json::json!({
