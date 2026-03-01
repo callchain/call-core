@@ -575,6 +575,17 @@ impl Pathfinder {
             b.quality.partial_cmp(&a.quality).unwrap_or(std::cmp::Ordering::Equal)
         });
 
+        // If no paths found and this is a CALL payment, add a direct path
+        // In XRPL, you can always send CALL directly to any account
+        if found_paths.is_empty() && target_currency == Currency::CALL {
+            found_paths.push(FoundPath {
+                steps: vec![], // Empty path = direct payment
+                source_amount: destination_amount.clone(),
+                destination_amount: destination_amount.clone(),
+                quality: 1.0,
+            });
+        }
+
         found_paths
     }
 
