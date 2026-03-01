@@ -1089,6 +1089,11 @@ impl Application {
         // Save node state
         self.save_node_state();
 
+        // Populate ledger_state from genesis ledger state_tree
+        info!("Populating ledger state from genesis...");
+        let imported_count = self.ledger_state.import_from_ledger(&genesis_ledger);
+        info!("Imported {} entries into ledger state", imported_count);
+
         info!("Stored genesis ledger in database");
 
         Ok(())

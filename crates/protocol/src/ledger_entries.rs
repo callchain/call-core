@@ -1673,9 +1673,17 @@ impl LedgerState {
         let temp_root = AccountRoot::new(*account);
         let index = temp_root.ledger_index();
 
+        // Debug: print the computed index
+        let account_hex: String = account.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+        let index_hex: String = index.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+        tracing::debug!("get_account_root: account={}, computed_index={}",
+            account_hex, index_hex);
+
         // Fetch from SHAMap
         self.state_map.get_item(&index).and_then(|item| {
             // Deserialize the AccountRoot from stored data
+            let index_hex: String = index.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+            tracing::debug!("get_account_root: found item for index={}", index_hex);
             Self::deserialize_account_root(account, item.data())
         })
     }
@@ -1816,6 +1824,38 @@ impl LedgerState {
     /// Get an entry by key
     pub fn get(&self, key: &primitives::UInt256) -> Option<&shamap::SHAMapItem> {
         self.state_map.get_item(key)
+    }
+
+    /// Import all entries from an iterator of SHAMapItems
+    /// Used to populate ledger_state from genesis ledger
+    pub fn import_from_iter(&mut self, items: impl Iterator<Item = shamap::SHAMapItem>) {
+        for item in items {
+            let _ = self.state_map.add_item(item.key(), item);
+        }
+    }
+
+    /// Import all state entries from a Ledger's state_tree
+    /// Used to populate ledger_state from genesis ledger
+    pub fn import_from_ledger(&mut self, ledger: &crate::Ledger) -> usize {
+        let mut count = 0;
+        tracing::info!("import_from_ledger: starting import from genesis ledger");
+        for item in ledger.state_tree.iter() {
+            let key = item.key();
+            let key_hex: String = key.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+            tracing::info!("import_from_ledger: importing item with key={}", key_hex);
+            // Clone the item since we need to add it to our state_map
+            let cloned_item = shamap::SHAMapItem::new(item.key(), item.data().to_vec());
+            let added = self.state_map.add_item(item.key(), cloned_item);
+            tracing::info!("import_from_ledger: add_item result: {}", added);
+
+            // Verify immediately after adding
+            let verify = self.state_map.get_item(&key);
+            tracing::info!("import_from_ledger: immediate verify result: {}", verify.is_some());
+
+            count += 1;
+        }
+        tracing::info!("import_from_ledger: imported {} items", count);
+        count
     }
 
     /// Get all trust lines (CallState) for an account

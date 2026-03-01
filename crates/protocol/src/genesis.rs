@@ -255,14 +255,16 @@ impl GenesisConfig {
         for (address, account) in &self.allocations {
             match Self::create_account_root(address, account) {
                 Ok((key, data)) => {
-                    ledger.add_state_entry(key, data);
-                    debug!("Added genesis account: {} with balance {}", address, account.balance);
+                    let success = ledger.add_state_entry(key, data.clone());
+                    info!("Added genesis account: {} with key {} -> success={}, data_len={}",
+                        address, key.to_hex(), success, data.len());
                 }
                 Err(e) => {
                     warn!("Failed to create genesis account {}: {}", address, e);
                 }
             }
         }
+        info!("Genesis ledger state_tree has {} items", ledger.state_tree.iter().count());
 
         // Update ledger hashes
         ledger.update_hashes();

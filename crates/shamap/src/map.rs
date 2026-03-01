@@ -1,4 +1,5 @@
 use crate::SHAMapAbstractNode;
+use crate::inner_node::SHAMapInnerNode;
 use crate::leaf_node::{SHAMapItem, SHAMapTreeNode, SHAMapTreeNodeType};
 use crypto::sha512_half;
 use primitives::UInt256;
@@ -74,10 +75,48 @@ impl SHAMap {
         }
 
         match current {
-            SHAMapAbstractNode::Leaf(_) => {
-                let old_leaf = std::mem::replace(current, node);
-                *current = old_leaf;
-                true
+            SHAMapAbstractNode::Leaf(leaf) => {
+                // Get the key of the existing leaf
+                let existing_key = leaf.item().key();
+
+                // If same key, replace (update)
+                if existing_key == key {
+                    *current = node;
+                    true
+                } else {
+                    // Different keys - need to create inner node and add both leaves
+                    let existing_branch = Self::get_branch_index(&existing_key, depth);
+                    let new_branch = Self::get_branch_index(&key, depth);
+
+                    if existing_branch == new_branch {
+                        // Same branch - need to go deeper
+                        // Create inner node and recursively insert both
+                        let mut new_inner = SHAMapInnerNode::new(0);
+
+                        // Take the old leaf out and add it to the new inner node
+                        let old_leaf = std::mem::replace(current, SHAMapAbstractNode::Inner(SHAMapInnerNode::new(0)));
+                        new_inner.set_child(existing_branch, old_leaf);
+
+                        // Now recursively add the new node
+                        if let Some(child) = new_inner.get_child_mut(new_branch) {
+                            Self::insert_recursive(child, key, node, depth + 1);
+                        }
+
+                        *current = SHAMapAbstractNode::Inner(new_inner);
+                        true
+                    } else {
+                        // Different branches - create inner node with both children
+                        let mut new_inner = SHAMapInnerNode::new(0);
+                        let old_leaf = std::mem::replace(current, SHAMapAbstractNode::Inner(new_inner));
+
+                        // Set up new inner node with both children
+                        if let SHAMapAbstractNode::Inner(inner) = current {
+                            inner.set_child(existing_branch, old_leaf);
+                            inner.set_child(new_branch, node);
+                        }
+                        true
+                    }
+                }
             }
             SHAMapAbstractNode::Inner(inner) => {
                 let branch = Self::get_branch_index(&key, depth);
@@ -110,8 +149,39 @@ impl SHAMap {
         self.get_node(key).and_then(|n| n.as_leaf().map(|l| l.item()))
     }
 
-    fn get_node(&self, _key: &UInt256) -> Option<&SHAMapAbstractNode> {
-        self.root.as_ref().map(|r| r.as_ref())
+    fn get_node(&self, key: &UInt256) -> Option<&SHAMapAbstractNode> {
+        let mut current = self.root.as_deref()?;
+        let mut depth = 0;
+
+        loop {
+            match current {
+                SHAMapAbstractNode::Leaf(leaf) => {
+                    // Check if this leaf's key matches
+                    if leaf.item().key() == *key {
+                        return Some(current);
+                    }
+                    return None;
+                }
+                SHAMapAbstractNode::Inner(inner) => {
+                    let branch = Self::get_branch_index(key, depth);
+                    if let Some(child) = inner.get_child(branch) {
+                        current = child;
+                        depth += 1;
+                    } else {
+                        return None;
+                    }
+                }
+                SHAMapAbstractNode::InnerV2(inner_v2) => {
+                    let branch = Self::get_branch_index(key, depth);
+                    if let Some(child) = inner_v2.get_child(branch) {
+                        current = child;
+                        depth += 1;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
     }
 
     pub fn get_root_hash(&self) -> UInt256 {
