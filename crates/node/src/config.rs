@@ -42,6 +42,9 @@ pub struct Config {
 
     /// Log level
     pub log_level: String,
+
+    /// Path to genesis configuration file (optional)
+    pub genesis_file: Option<String>,
 }
 
 mod serde_socket_addr {
@@ -103,6 +106,7 @@ impl Default for Config {
             rpc_port: 5005,
             rpc_admin_enabled: false,
             log_level: "info".to_string(),
+            genesis_file: None,
         }
     }
 }

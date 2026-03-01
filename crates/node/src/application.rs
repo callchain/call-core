@@ -3,6 +3,7 @@ use crate::rpc::{RpcConfig, RpcServer, AppRpcHandler};
 use consensus::{Consensus, ConsensusParms, ConsensusMode, ConsensusPhase};
 use network::Overlay;
 use primitives::{AccountID, NodeID, UInt256};
+use protocol::{GenesisConfig, GenesisLoader};
 use storage::Database;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -146,6 +147,8 @@ pub struct Application {
     shard_store: storage::ShardStore,
     /// Shard crawler for discovering shards from peers
     shard_crawler: storage::ShardCrawler,
+    /// Genesis configuration (loaded at startup)
+    genesis_config: Option<GenesisConfig>,
 }
 
 /// Log manager for handling log file rotation
@@ -768,6 +771,7 @@ impl Application {
             network_command_tx: None,
             shard_store,
             shard_crawler,
+            genesis_config: None,
         })
     }
 
@@ -873,6 +877,11 @@ impl Application {
     /// Get the feature store (mutable)
     pub fn get_feature_store_mut(&mut self) -> &mut FeatureStore {
         &mut self.feature_store
+    }
+
+    /// Get the genesis configuration (if loaded)
+    pub fn get_genesis_config(&self) -> Option<&GenesisConfig> {
+        self.genesis_config.as_ref()
     }
 
     /// Save feature flags to file
@@ -1034,28 +1043,46 @@ impl Application {
             return Ok(());
         }
 
-        // No saved state, create genesis ledger
-        let genesis = protocol::Ledger::genesis();
-        let genesis_hash = genesis.get_hash();
-        let genesis_seq = genesis.get_seq();
+        // No saved state, load or create genesis configuration
+        let (genesis_ledger, genesis_config) = if let Some(ref genesis_path) = self.config.genesis_file {
+            info!("Loading genesis from configured path: {}", genesis_path);
+            GenesisLoader::load_or_create(Some(genesis_path))
+                .map_err(|e| anyhow::anyhow!("Failed to load genesis: {}", e))?
+        } else if GenesisLoader::genesis_exists("genesis.json") {
+            info!("Loading genesis from default genesis.json");
+            GenesisLoader::load_or_create(Some("genesis.json"))
+                .map_err(|e| anyhow::anyhow!("Failed to load genesis: {}", e))?
+        } else {
+            info!("No genesis file found, using default devnet configuration");
+            GenesisLoader::load_or_create::<&str>(None)
+                .map_err(|e| anyhow::anyhow!("Failed to create genesis: {}", e))?
+        };
+
+        let genesis_hash = genesis_ledger.get_hash();
+        let genesis_seq = genesis_ledger.get_seq();
 
         info!(
             "Created genesis ledger: seq={}, hash={}",
             genesis_seq,
             hex::encode(genesis_hash.as_bytes())
         );
+        info!("Genesis config: chain_id={}, network={}",
+            genesis_config.config.chain_id,
+            genesis_config.config.network_name
+        );
+        info!("Genesis allocations: {} accounts", genesis_config.allocations.len());
 
         // Store the current ledger info
         self.current_ledger_hash = genesis_hash;
         self.current_ledger_seq = genesis_seq;
+        self.genesis_config = Some(genesis_config);
 
         // Store genesis ledger in database
-        // Serialize ledger info and store it
         let ledger_data = serde_json::to_vec(&serde_json::json!({
             "hash": hex::encode(genesis_hash.as_bytes()),
             "seq": genesis_seq,
-            "parent_hash": hex::encode(genesis.info.parent_hash.as_bytes()),
-            "close_time": genesis.info.close_time,
+            "parent_hash": hex::encode(genesis_ledger.info.parent_hash.as_bytes()),
+            "close_time": genesis_ledger.info.close_time,
         }))?;
         self.database.store_ledger(genesis_hash, ledger_data);
 
@@ -1781,6 +1808,7 @@ mod tests {
             rpc_port: 0,
             rpc_admin_enabled: false,
             log_level: "info".to_string(),
+            genesis_file: None,
         }
     }
 
