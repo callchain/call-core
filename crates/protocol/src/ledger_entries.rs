@@ -1673,17 +1673,9 @@ impl LedgerState {
         let temp_root = AccountRoot::new(*account);
         let index = temp_root.ledger_index();
 
-        // Debug: print the computed index
-        let account_hex: String = account.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
-        let index_hex: String = index.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
-        tracing::debug!("get_account_root: account={}, computed_index={}",
-            account_hex, index_hex);
-
         // Fetch from SHAMap
         self.state_map.get_item(&index).and_then(|item| {
-            // Deserialize the AccountRoot from stored data
-            let index_hex: String = index.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
-            tracing::debug!("get_account_root: found item for index={}", index_hex);
+            tracing::debug!("get_account_root: found item, data_len={}, attempting deserialization", item.data().len());
             Self::deserialize_account_root(account, item.data())
         })
     }
@@ -1989,9 +1981,28 @@ impl LedgerState {
     }
 
     fn deserialize_account_root(account: &AccountID, data: &[u8]) -> Option<AccountRoot> {
+        // First try STObject format (used by genesis)
         use serialization::SerialIter;
+        use crate::ledger_entries::LedgerEntry;
+
         let mut iter = SerialIter::new(data);
 
+        // Try to parse as STObject first
+        tracing::debug!("deserialize_account_root: trying STObject format, data_len={}", data.len());
+        if let Ok(obj) = iter.get_object() {
+            tracing::debug!("deserialize_account_root: parsed STObject with {} fields", obj.len());
+            // Try STObject deserialization via LedgerEntry trait
+            if let Some(root) = AccountRoot::from_stobject(&obj) {
+                tracing::debug!("deserialize_account_root: STObject deserialization successful, balance={}", root.balance.mantissa);
+                return Some(root);
+            }
+            tracing::debug!("deserialize_account_root: STObject parsing succeeded but from_stobject failed");
+        } else {
+            tracing::debug!("deserialize_account_root: STObject parsing failed, falling back to raw format");
+        }
+
+        // Fall back to raw format
+        iter.set_position(0);
         let _ = iter.get_account().ok()?;
         let balance = iter.get_amount().ok()?;
         let sequence = iter.get32().ok()?;
@@ -1999,6 +2010,7 @@ impl LedgerState {
         let previous_txn_id = iter.get256().ok()?;
         let previous_txn_lgr_seq = iter.get32().ok()?;
 
+        tracing::debug!("deserialize_account_root: raw format successful, balance={}", balance.mantissa);
         Some(AccountRoot {
             account: *account,
             balance,

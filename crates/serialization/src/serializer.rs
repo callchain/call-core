@@ -609,6 +609,78 @@ impl<'a> SerialIter<'a> {
     pub fn set_position(&mut self, pos: u64) {
         self.cursor.set_position(pos);
     }
+
+    /// Parse an STObject from the serialized data.
+    /// This reads field ID/value pairs until the end of the object (marked by Object end).
+    pub fn get_object(&mut self) -> Result<STObject, SerializeError> {
+        use crate::types::{SerializedTypeID, STObject, STValue};
+
+        let mut obj = STObject::new();
+
+        while !self.eof() {
+            // Peek at the next byte to check for object end (0xf9 for STObject with field 1)
+            // In practice, we need to detect the end marker
+            let pos = self.position();
+
+            // Try to read field ID
+            let (type_id, field_num) = match self.get_field_id() {
+                Ok(t) => t,
+                Err(_) => {
+                    // Reset position and return what we have
+                    self.set_position(pos);
+                    break;
+                }
+            };
+
+            // Check for special end-of-object marker
+            // Object end is typically indicated by specific type codes
+            if type_id == 0 && field_num == 0 {
+                break;
+            }
+
+            // Parse the value based on type
+            let value = match SerializedTypeID::try_from(type_id) {
+                Ok(SerializedTypeID::UInt16) => STValue::UInt16(self.get16()?),
+                Ok(SerializedTypeID::UInt32) => STValue::UInt32(self.get32()?),
+                Ok(SerializedTypeID::UInt64) => STValue::UInt64(self.get64()?),
+                Ok(SerializedTypeID::UInt8) => STValue::UInt8(self.get8()?),
+                Ok(SerializedTypeID::Hash128) => STValue::Hash128(self.get128()?),
+                Ok(SerializedTypeID::Hash160) => STValue::Hash160(self.get160()?),
+                Ok(SerializedTypeID::Hash256) => STValue::Hash256(self.get256()?),
+                Ok(SerializedTypeID::Amount) => STValue::Amount(self.get_amount()?),
+                Ok(SerializedTypeID::VL) => STValue::VL(self.get_vl()?),
+                Ok(SerializedTypeID::Account) => STValue::Account(self.get_account()?),
+                Ok(SerializedTypeID::Vector256) => {
+                    // Read vector of 256-bit hashes
+                    let data = self.get_vl()?;
+                    let mut hashes = Vec::new();
+                    for chunk in data.chunks_exact(32) {
+                        let mut bytes = [0u8; 32];
+                        bytes.copy_from_slice(chunk);
+                        hashes.push(UInt256::new(bytes));
+                    }
+                    STValue::Vector256(hashes)
+                }
+                Ok(SerializedTypeID::Object) => {
+                    // Nested object - skip for now
+                    continue;
+                }
+                Ok(SerializedTypeID::Array) => {
+                    // Array - skip for now
+                    continue;
+                }
+                _ => {
+                    return Err(SerializeError::InvalidType);
+                }
+            };
+
+            // Create field code and insert
+            let field_code = ((type_id as u32) << 16) | (field_num as u32);
+            obj.insert_raw(field_code, value);
+        }
+
+        Ok(obj)
+    }
 }
 
 #[cfg(test)]

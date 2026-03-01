@@ -26,6 +26,35 @@ pub enum SerializedTypeID {
     Metadata = 10004,
 }
 
+impl TryFrom<i16> for SerializedTypeID {
+    type Error = ();
+
+    fn try_from(value: i16) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::NotPresent),
+            1 => Ok(Self::UInt16),
+            2 => Ok(Self::UInt32),
+            3 => Ok(Self::UInt64),
+            4 => Ok(Self::Hash128),
+            5 => Ok(Self::Hash256),
+            6 => Ok(Self::Amount),
+            7 => Ok(Self::VL),
+            8 => Ok(Self::Account),
+            14 => Ok(Self::Object),
+            15 => Ok(Self::Array),
+            16 => Ok(Self::UInt8),
+            17 => Ok(Self::Hash160),
+            18 => Ok(Self::PathSet),
+            19 => Ok(Self::Vector256),
+            10001 => Ok(Self::Transaction),
+            10002 => Ok(Self::LedgerEntry),
+            10003 => Ok(Self::Validation),
+            10004 => Ok(Self::Metadata),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SField {
     pub type_id: SerializedTypeID,
@@ -414,6 +443,11 @@ impl STObject {
 
     pub fn insert(&mut self, field: SField, value: STValue) {
         self.fields.insert(field.field_code, value);
+    }
+
+    /// Insert a value using a raw field code (for deserialization)
+    pub fn insert_raw(&mut self, field_code: u32, value: STValue) {
+        self.fields.insert(field_code, value);
     }
 
     pub fn get(&self, field: SField) -> Option<&STValue> {

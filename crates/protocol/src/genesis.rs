@@ -298,15 +298,15 @@ impl GenesisConfig {
         // Compute ledger index (key) for this account
         let ledger_index = AccountRoot::compute_ledger_index(&account_id);
 
-        // Serialize account to bytes using LedgerEntry trait
-        use crate::ledger_entries::LedgerEntry;
+        // Serialize account to bytes using raw format (consistent with LedgerState)
         use serialization::Serializer;
-        let st_object = account_root.to_stobject();
-
-        // Serialize the STObject to bytes
         let mut serializer = Serializer::new();
-        serializer.add_object(&st_object)
-            .map_err(|e| GenesisError::Validation(format!("Failed to serialize account: {:?}", e)))?;
+        serializer.add_account(account_root.account);
+        serializer.add_amount(account_root.balance);
+        serializer.add32(account_root.sequence);
+        serializer.add32(account_root.owner_count);
+        serializer.add256(account_root.previous_txn_id);
+        serializer.add32(account_root.previous_txn_lgr_seq);
         let data = serializer.finish();
 
         Ok((ledger_index, data))
