@@ -1,0 +1,69 @@
+{
+  "config": {
+    "chainId": 1,
+    "networkName": "callchain-devnet",
+    "genesisTime": "2025-01-01T00:00:00Z",
+    "consensusParams": {
+      "ledgerMinCloseTime": 2,
+      "ledgerMaxCloseTime": 20,
+      "ledgerMinConsensus": 1,
+      "ledgerMaxConsensus": 50,
+      "validationQuorum": 1,
+      "minProposeTime": 3,
+      "maxProposeTime": 30
+    },
+    "feeSettings": {
+      "baseFee": 10,
+      "reserveBase": 10000000,
+      "reserveIncrement": 2000000
+    }
+  },
+  "alloc": {
+    "cw6htsw3GuePRosi6viQfUrCiMcqn5L2R2": {
+      "balance": "100000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cEhww3EorJ51Qt5q8GPphRq6e6v6c8SrPN": {
+      "balance": "50000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cKWNc1vH2xvRrY1q6DHPoAhn1q3GMHx9b": {
+      "balance": "25000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cHjJ9P8sBr7qMkbZzZnk7dYX5r5d7XNP3": {
+      "balance": "10000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cL8p1aN3vQ2wR9tY5kM7jH4bX6cV2zQ8": {
+      "balance": "5000000000",
+      "sequence": 1,
+      "flags": 0
+    }
+  },
+  "validators": [
+    {
+      "nodeId": "NodeID(0000000000000000000000000000000000000000000000000000000000000000)",
+      "publicKey": "0330E7FC9D56BB25D6893BA3F317AE5BCF33B3291BD63DB32654A313222F7FD020",
+      "domain": "validator1.callchain.local"
+    },
+    {
+      "nodeId": "NodeID(1111111111111111111111111111111111111111111111111111111111111111)",
+      "publicKey": "02C1FA69EBEDD153A6D07E98FBAB5E6CE9DE67C200E3A29858495A42D356B90972",
+      "domain": "validator2.callchain.local"
+    },
+    {
+      "nodeId": "NodeID(2222222222222222222222222222222222222222222222222222222222222222)",
+      "publicKey": "03D2GB7FCFEE264B164F8B98C5B7BF1E0AF2F78D310F4A698695B53E467C10A83",
+      "domain": "validator3.callchain.local"
+    }
+  ],
+  "coinbase": "cw6htsw3GuePRosi6viQfUrCiMcqn5L2R2",
+  "difficulty": "1",
+  "gasLimit": "10000000",
+  "timestamp": "0x0"
+}

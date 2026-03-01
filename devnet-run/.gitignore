@@ -1,0 +1,5 @@
+# Devnet runtime files - do not commit
+data/
+node.log
+nohup.out
+*.log
