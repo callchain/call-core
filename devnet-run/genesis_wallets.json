@@ -1,0 +1,57 @@
+{
+  "note": "GENESIS WALLETS - Generated from BIP44 mnemonic (cointype 644) - FOR TESTING ONLY",
+  "mnemonic": "test test test test test test test test test test test junk",
+  "derivation_path": "m/44'/644'/0'/0/{index}",
+  "wallets": [
+    {
+      "name": "Genesis Account 1",
+      "address": "cagpMvZf6Z8GrnAPZdQgXrCqBvCFmQYfJi",
+      "hex_id": "3e39fcc137a272773c1e63fb52db14c5402ed192",
+      "balance": "100000000000",
+      "seed": "snTwCbEYk7ui94RuHn8SfWjs2jd5Y",
+      "private_key": "84bae4ac1031a98e5268ff4a9f1e983ada5822622a4040edd5e694a05ed4c7d8",
+      "public_key": "02af1fac70184276b5beb83afd2e74f127ea1f98cfb4f7c35728272aa5cc4cbe5f",
+      "account_index": 0
+    },
+    {
+      "name": "Genesis Account 2",
+      "address": "cGMbLyeUsUpjTtMFcCWZDVA4hdMXpjvPi3",
+      "hex_id": "a86ee011ed6d1aa7479d0c83cedf844b0b9805b6",
+      "balance": "50000000000",
+      "seed": "snMJdHz8J4hqCAUFctxft3fYLrXHR",
+      "private_key": "80a2abd1ed4321180d246759c1e183bc5f20e8675d7ec515e9e66962cbc4ae59",
+      "public_key": "03a57d95b70e4d7c0d4db8053b2b68bad16c228f6a00dc3501d456195d539466b3",
+      "account_index": 1
+    },
+    {
+      "name": "Genesis Account 3",
+      "address": "cadFKa9yk1Fv4PBj2DeZfYW48APXj4L8g",
+      "hex_id": "0110cfe0f005c09fff426f38477ae2f6e01d958e",
+      "balance": "25000000000",
+      "seed": "ssurbhFSvTy6iq3SqkwTE3PFVUc6o",
+      "private_key": "c87e982930e9b7494f0cdd7510bb4d441596d7e74a210f3c5cc8153e105cf43c",
+      "public_key": "02e54663828d8dee91c9173730a67ad47dd6c919b5551d0a74e6b31943fb113b6b",
+      "account_index": 2
+    },
+    {
+      "name": "Genesis Account 4",
+      "address": "cLxud1QujAfeYszuY6DBwBhGE4fQ3GhKS5",
+      "hex_id": "dafd34b1e33a5d9aabb14cb49bafa974485142f9",
+      "balance": "10000000000",
+      "seed": "ssiRK6eJy1UKup76Cb4tXf6H37ZXy",
+      "private_key": "fe83cb0e5a07fe24abc53439b36d7cc3dae577dbe4ebdf8cabbeff6dcb004289",
+      "public_key": "020960bf813b949691187f6322974382322393cacf0b861be88bc74bcd6178cc43",
+      "account_index": 3
+    },
+    {
+      "name": "Genesis Account 5",
+      "address": "cGUQS4suRWMibEGCz46xxMVw45yB3h5Pio",
+      "hex_id": "a6b206dc858a38f5213336b49173a25cf2118a8d",
+      "balance": "5000000000",
+      "seed": "shNsiWGT6PqQKQGHYvtEuiaQWkjtf",
+      "private_key": "214b5a897577647adcb763492f9f4a81ba5f7c618cc77efa590ea63cb54d9711",
+      "public_key": "03d82bd58b391d4690da241e198c31372442f4a3ca994573a1edbe3b97fd664d21",
+      "account_index": 4
+    }
+  ]
+}

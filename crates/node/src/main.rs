@@ -126,6 +126,43 @@ enum Commands {
 
     /// Generate a new wallet
     GenerateWallet,
+
+    /// Sign a transaction
+    Sign {
+        /// Secret (seed or hex private key)
+        #[arg(short, long)]
+        secret: String,
+
+        /// Transaction JSON (as string)
+        #[arg(short, long)]
+        tx_json: String,
+    },
+
+    /// Derive Callchain accounts from BIP39/BIP44 mnemonic
+    DeriveFromMnemonic {
+        /// Mnemonic phrase (BIP39)
+        #[arg(short, long)]
+        mnemonic: String,
+
+        /// Number of accounts to derive
+        #[arg(short, long, default_value = "5")]
+        count: u32,
+
+        /// Output format (json or text)
+        #[arg(short, long, default_value = "json")]
+        format: String,
+    },
+
+    /// Sign a transaction locally (no RPC required)
+    SignLocal {
+        /// Private key (hex) or mnemonic-derived path (e.g., "mnemonic:0/0/0")
+        #[arg(short, long)]
+        key: String,
+
+        /// Transaction JSON file path or inline JSON
+        #[arg(short, long)]
+        tx: String,
+    },
 }
 
 #[tokio::main]
@@ -148,6 +185,18 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::GenerateWallet) => {
             generate_wallet();
+            return Ok(());
+        }
+        Some(Commands::Sign { secret, tx_json }) => {
+            sign_transaction_cli(&secret, &tx_json).await?;
+            return Ok(());
+        }
+        Some(Commands::DeriveFromMnemonic { mnemonic, count, format }) => {
+            derive_from_mnemonic(&mnemonic, count, &format)?;
+            return Ok(());
+        }
+        Some(Commands::SignLocal { key, tx }) => {
+            sign_transaction_local(&key, &tx)?;
             return Ok(());
         }
         _ => {}
@@ -345,6 +394,150 @@ async fn show_account_info(config: &Config, account: &str) -> anyhow::Result<()>
     // Format and display the result
     println!("Account Information:");
     println!("{}", serde_json::to_string_pretty(&result)?);
+
+    Ok(())
+}
+
+async fn sign_transaction_cli(secret: &str, tx_json: &str) -> anyhow::Result<()> {
+    // Parse tx_json to validate it's proper JSON
+    let tx_value: serde_json::Value = serde_json::from_str(tx_json)
+        .map_err(|e| anyhow::anyhow!("Invalid JSON in tx_json: {}", e))?;
+
+    // Use default RPC URL (node must be running)
+    let rpc_url = "http://127.0.0.1:5005";
+
+    println!("Signing transaction...");
+
+    let params = serde_json::json!({
+        "secret": secret,
+        "tx_json": tx_value
+    });
+
+    let result = rpc_request(rpc_url, "sign", Some(params)).await?;
+
+    // Display the result
+    println!("Sign Result:");
+    println!("{}", serde_json::to_string_pretty(&result)?);
+
+    // Extract and display key information
+    if let Some(tx_blob) = result.get("tx_blob").and_then(|v| v.as_str()) {
+        println!("\nSigned Transaction Blob (tx_blob):");
+        println!("{}", tx_blob);
+        println!("\nTo submit, use:");
+        println!("  ./target/release/calld submit {}", tx_blob);
+    }
+
+    Ok(())
+}
+
+/// Derive Callchain accounts from a BIP39/BIP44 mnemonic
+fn derive_from_mnemonic(mnemonic: &str, count: u32, format: &str) -> anyhow::Result<()> {
+    use crypto::MnemonicWallet;
+
+    // Create wallet from mnemonic
+    let wallet = MnemonicWallet::from_mnemonic(mnemonic)
+        .map_err(|e| anyhow::anyhow!("Failed to parse mnemonic: {}", e))?;
+
+    // Derive accounts
+    let accounts = wallet.derive_accounts(count);
+
+    match format {
+        "json" => {
+            let json_accounts: Vec<_> = accounts.iter().map(|a| a.to_json()).collect();
+            println!("{}", serde_json::to_string_pretty(&json_accounts)?);
+        }
+        _ => {
+            println!("BIP44 Mnemonic-derived Accounts (Coin Type: 644)");
+            println!("================================================");
+            println!("Mnemonic: {}", mnemonic);
+            println!();
+
+            for (i, account) in accounts.iter().enumerate() {
+                println!("Account {}", i);
+                println!("  Address: {}", account.address);
+                println!("  Hex ID: {}", account.hex_id);
+                println!("  Seed: {}", account.seed);
+                println!("  Public Key: {}", account.public_key);
+                println!("  Private Key: {}", account.private_key);
+                println!();
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Sign a transaction locally without using RPC
+fn sign_transaction_local(key: &str, tx: &str) -> anyhow::Result<()> {
+    use crypto::{PrivateKey, TransactionSigner, KeyType};
+    use std::fs;
+
+    // Read transaction JSON
+    let tx_json_str = if tx.starts_with('{') {
+        tx.to_string()
+    } else {
+        fs::read_to_string(tx)?
+    };
+
+    let tx_json: serde_json::Value = serde_json::from_str(&tx_json_str)
+        .map_err(|e| anyhow::anyhow!("Invalid transaction JSON: {}", e))?;
+
+    // Parse private key
+    let private_key = if key.starts_with("mnemonic:") {
+        return Err(anyhow::anyhow!("Mnemonic-derived signing not yet implemented. Use hex private key instead."));
+    } else {
+        // Parse hex private key
+        let key_bytes = hex::decode(key)
+            .map_err(|_| anyhow::anyhow!("Invalid hex private key"))?;
+        PrivateKey::from_bytes(KeyType::Secp256k1, &key_bytes)
+            .ok_or_else(|| anyhow::anyhow!("Invalid private key"))?
+    };
+
+    // Extract transaction fields from JSON
+    let account_hex = tx_json.get("Account")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing Account field"))?;
+    let account_bytes = hex::decode(account_hex)?;
+    let account = primitives::AccountID::new(account_bytes.try_into().unwrap());
+
+    let sequence = tx_json.get("Sequence")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("Missing Sequence field"))? as u32;
+
+    let tx_type = tx_json.get("TransactionType")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing TransactionType field"))?;
+
+    // Create and sign transaction based on type
+    let tx_blob = match tx_type {
+        "Payment" => {
+            let dest_hex = tx_json.get("Destination")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing Destination field"))?;
+            let dest_bytes = hex::decode(dest_hex)?;
+            let destination = primitives::AccountID::new(dest_bytes.try_into().unwrap());
+
+            let amount_str = tx_json.get("Amount")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing Amount field"))?;
+            let amount: u64 = amount_str.parse()?;
+
+            TransactionSigner::sign_payment(account, destination, amount, sequence, &private_key)
+                .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?
+        }
+        "AccountSet" => {
+            TransactionSigner::sign_account_set(account, sequence, &private_key)
+                .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?
+        }
+        _ => {
+            return Err(anyhow::anyhow!("Unsupported transaction type: {}", tx_type));
+        }
+    };
+
+    println!("Transaction signed successfully!");
+    println!("TxBlob: {}", tx_blob);
+    println!("\nTo submit:");
+    println!("  ./target/release/calld submit {}", tx_blob);
 
     Ok(())
 }

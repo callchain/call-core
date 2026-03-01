@@ -191,12 +191,23 @@ impl GenesisConfig {
         }
 
         // Try to decode base58 address (c... format)
-        // For now, generate deterministic account from address string hash
         if address.starts_with('c') {
-            let hash = crypto::sha512_half(address.as_bytes());
-            let bytes: [u8; 20] = hash.as_bytes()[0..20].try_into()
-                .map_err(|_| GenesisError::AddressParse("Failed to extract bytes from hash".to_string()))?;
-            return Ok(AccountID::new(bytes));
+            // Use crypto crate's base58 decode
+            match crypto::base58::decode(address) {
+                Ok(decoded) => {
+                    // Format: version (1 byte) + account_id (20 bytes) + checksum (4 bytes)
+                    if decoded.len() == 25 {
+                        let mut bytes = [0u8; 20];
+                        bytes.copy_from_slice(&decoded[1..21]);
+                        return Ok(AccountID::new(bytes));
+                    } else {
+                        return Err(GenesisError::AddressParse(format!("Invalid decoded address length: {}", decoded.len())));
+                    }
+                }
+                Err(e) => {
+                    return Err(GenesisError::AddressParse(format!("Failed to decode base58 address: {:?}", e)));
+                }
+            }
         }
 
         Err(GenesisError::AddressParse(format!("Invalid address format: {}", address)))

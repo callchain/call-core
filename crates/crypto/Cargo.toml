@@ -9,12 +9,16 @@ primitives = { path = "../primitives" }
 sha2 = { workspace = true }
 ripemd = { workspace = true }
 ed25519-dalek = { workspace = true, features = ["rand_core"] }
-secp256k1 = { workspace = true, features = ["rand"] }
+secp256k1 = { workspace = true, features = ["rand", "global-context"] }
 rand = { workspace = true }
 zeroize = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 hex = { workspace = true }
+bip39 = "2.0"
+serde_json = { workspace = true }
+hmac = { version = "0.12", default-features = false }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 
 [dev-dependencies]
 proptest = { workspace = true }

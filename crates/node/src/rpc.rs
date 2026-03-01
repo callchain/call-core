@@ -296,18 +296,20 @@ impl AppRpcHandler {
                 Err(JsonRpcError::new(31, "Private key must be 32 bytes"))
             }
         } else {
-            // For seed-based derivation, generate a deterministic key from the seed string
-            // In production, this should use proper BIP39/BIP32 derivation
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            secret.hash(&mut hasher);
-            let hash = hasher.finish();
-            let mut seed_bytes = vec![0u8; 32];
-            seed_bytes[..8].copy_from_slice(&hash.to_be_bytes());
-            // Use a CSPRNG would be better, but for now we use deterministic generation
-            PrivateKey::from_bytes(KeyType::Secp256k1, &seed_bytes)
-                .ok_or_else(|| JsonRpcError::new(31, "Failed to generate key from seed"))
+            // For seed-based derivation, use the proper wallet derivation
+            // This ensures seeds like "ss9e7tg3C4NJ3zga9y28gSWhDvhgP" produce the correct keys
+            match crypto::wallet::decode_seed(secret) {
+                Some(entropy) => {
+                    // Use SHA256 to derive 32 bytes from 16-byte entropy (same as wallet.rs)
+                    let key_hash = crypto::sha256(&entropy);
+
+                    PrivateKey::from_bytes(KeyType::Secp256k1, &key_hash)
+                        .ok_or_else(|| JsonRpcError::new(31, "Failed to generate key from seed"))
+                }
+                None => {
+                    Err(JsonRpcError::new(31, "Invalid seed format"))
+                }
+            }
         }
     }
 
