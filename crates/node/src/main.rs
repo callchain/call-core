@@ -123,6 +123,9 @@ enum Commands {
         /// Account address
         account: String,
     },
+
+    /// Generate a new wallet
+    GenerateWallet,
 }
 
 #[tokio::main]
@@ -141,6 +144,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::ValidateSeed { seed }) => {
             validate_seed(&seed);
+            return Ok(());
+        }
+        Some(Commands::GenerateWallet) => {
+            generate_wallet();
             return Ok(());
         }
         _ => {}
@@ -195,6 +202,10 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn generate_seed() {
+    generate_wallet();
+}
+
+fn generate_wallet() {
     // Use the proper wallet generation
     let wallet = crypto::Wallet::generate();
 
