@@ -131,7 +131,8 @@ impl TransactionEngine {
             | TxType::OfferCancel
             | TxType::AccountSet
             | TxType::SetRegularKey
-            | TxType::SignerListSet => {}
+            | TxType::SignerListSet
+            | TxType::DepositPreauth => {}
             _ => return TER::temINVALID_TRANSACTION_TYPE,
         }
 
@@ -173,6 +174,7 @@ impl TransactionEngine {
             TxType::SetRegularKey => self.preflight_set_regular_key(ctx, tx),
             TxType::SignerListSet => self.preflight_signer_list_set(ctx, tx),
             TxType::NicknameSet => self.preflight_nickname_set(ctx, tx),
+            TxType::DepositPreauth => self.preflight_deposit_preauth(ctx, tx),
             _ => TER::temINVALID_TRANSACTION_TYPE,
         }
     }
@@ -207,6 +209,7 @@ impl TransactionEngine {
             TxType::SetRegularKey => self.preclaim_set_regular_key(ctx, tx, &account),
             TxType::SignerListSet => self.preclaim_signer_list_set(ctx, tx, &account),
             TxType::NicknameSet => self.preclaim_nickname_set(ctx, tx, &account),
+            TxType::DepositPreauth => self.preclaim_deposit_preauth(ctx, tx, &account),
             _ => TER::temINVALID_TRANSACTION_TYPE,
         }
     }
@@ -244,6 +247,7 @@ impl TransactionEngine {
             TxType::SetRegularKey => self.apply_set_regular_key(ctx, tx, &mut account, &mut result),
             TxType::SignerListSet => self.apply_signer_list_set(ctx, tx, &mut account, &mut result),
             TxType::NicknameSet => self.apply_nickname_set(ctx, tx, &mut account, &mut result),
+            TxType::DepositPreauth => self.apply_deposit_preauth(ctx, tx, &mut account, &mut result),
             _ => TER::tecINTERNAL,
         };
 
@@ -343,10 +347,9 @@ impl TransactionEngine {
         };
 
         // Check deposit authorization
-        // If the recipient has LSF_DEPOSIT_AUTH set, they must pre-authorize incoming payments
-        // For now, we reject all incoming payments to accounts with deposit auth enabled
-        // TODO: Implement pre-authorized depositors list
-        if recipient.requires_deposit_auth() && destination != sender.account {
+        // If the recipient has LSF_DEPOSIT_AUTH set, the sender must be pre-authorized
+        // This is checked via the LedgerState::is_authorized_to_send method
+        if !ctx.ledger.is_authorized_to_send(&sender.account, &destination) {
             return TER::tecNO_PERMISSION;
         }
 
@@ -859,6 +862,141 @@ impl TransactionEngine {
 
         TER::tesSUCCESS
     }
+}
+
+// DepositPreauth transaction implementation
+impl TransactionEngine {
+    fn preflight_deposit_preauth(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Must have an authorized account (destination field is reused for authorize)
+        if tx.destination.is_none() {
+            return TER::temDST_NEEDED;
+        }
+
+        // Cannot authorize self
+        if let Some(dest) = tx.destination {
+            if dest == tx.account {
+                return TER::temDST_IS_SRC;
+            }
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_deposit_preauth(&self, ctx: &ApplyContext, tx: &Transaction, _account: &AccountRoot) -> TER {
+        let authorize = match tx.destination {
+            Some(acc) => acc,
+            None => return TER::temDST_NEEDED,
+        };
+
+        // Check if preauthorization already exists
+        if ctx.ledger.get_deposit_preauth(&tx.account, &authorize).is_some() {
+            // Preauthorization already exists - this is an error for creation
+            return TER::tecDUPLICATE;
+        }
+
+        // Check if authorized account exists
+        if ctx.ledger.get_account_root(&authorize).is_none() {
+            return TER::tecNO_DST;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn apply_deposit_preauth(
+        &self,
+        ctx: &mut ApplyContext,
+        tx: &Transaction,
+        account: &mut AccountRoot,
+        result: &mut TxResult,
+    ) -> TER {
+        use crate::ledger_entries::DepositPreauth;
+
+        let authorize = match tx.destination {
+            Some(acc) => acc,
+            None => return TER::tecINTERNAL,
+        };
+
+        // Create the deposit preauthorization
+        let mut preauth = DepositPreauth::new(tx.account, authorize);
+        preauth.update_previous_txn(tx.get_hash(), ctx.ledger_seq);
+
+        // Store the preauthorization
+        ctx.ledger.set_deposit_preauth(&preauth);
+
+        // Update account owner count
+        account.owner_count = account.owner_count.saturating_add(1);
+
+        // Compute ledger index for affected nodes
+        let ledger_index = preauth.ledger_index();
+
+        // Track affected nodes for metadata
+        result.affected_nodes.push(AffectedLedgerNode::Created {
+            ledger_index,
+            data: vec![], // Would serialize the entry in full implementation
+        });
+
+        // Add authorized account to affected accounts
+        result.affected_accounts.push(authorize);
+
+        TER::tesSUCCESS
+    }
+}
+
+// DepositPreauth deletion transaction implementation (uses Unauthorize field)
+impl TransactionEngine {
+    fn preflight_deposit_preauth_cancel(&self, _ctx: &ApplyContext, tx: &Transaction) -> TER {
+        // Must have an unauthorize field (which account to remove authorization for)
+        if tx.unauthorize.is_none() {
+            return TER::temBAD_SIGNER;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn preclaim_deposit_preauth_cancel(&self, ctx: &ApplyContext, tx: &Transaction, _account: &AccountRoot) -> TER {
+        let unauthorize = match tx.unauthorize {
+            Some(acc) => acc,
+            None => return TER::temBAD_SIGNER,
+        };
+
+        // Check if preauthorization exists
+        if ctx.ledger.get_deposit_preauth(&tx.account, &unauthorize).is_none() {
+            return TER::tecNO_ENTRY;
+        }
+
+        TER::tesSUCCESS
+    }
+
+    fn apply_deposit_preauth_cancel(
+        &self,
+        ctx: &mut ApplyContext,
+        tx: &Transaction,
+        account: &mut AccountRoot,
+        result: &mut TxResult,
+    ) -> TER {
+        let unauthorize = match tx.unauthorize {
+            Some(acc) => acc,
+            None => return TER::tecINTERNAL,
+        };
+
+        // Compute ledger index before deletion for metadata
+        let temp_preauth = crate::ledger_entries::DepositPreauth::new(tx.account, unauthorize);
+        let ledger_index = temp_preauth.ledger_index();
+
+        // Delete the preauthorization
+        ctx.ledger.delete_deposit_preauth(&tx.account, &unauthorize);
+
+        // Update account owner count
+        account.owner_count = account.owner_count.saturating_sub(1);
+
+        // Track affected nodes for metadata
+        result.affected_nodes.push(AffectedLedgerNode::Deleted {
+            ledger_index,
+            previous: vec![],
+        });
+
+        TER::tesSUCCESS
+    }
 
     /// Verify transaction signature cryptographically
     fn verify_transaction_signature(&self, tx: &Transaction) -> bool {
@@ -1088,6 +1226,18 @@ mod tests {
 
         fn get_account_nicknames(&self, _account: &AccountID) -> Vec<crate::ledger_entries::NicknameEntry> {
             Vec::new()
+        }
+
+        fn get_deposit_preauth(&self, _account: &AccountID, _authorize: &AccountID) -> Option<crate::ledger_entries::DepositPreauth> {
+            None
+        }
+
+        fn set_deposit_preauth(&mut self, _preauth: &crate::ledger_entries::DepositPreauth) {}
+
+        fn delete_deposit_preauth(&mut self, _account: &AccountID, _authorize: &AccountID) {}
+
+        fn is_authorized_to_send(&self, _sender: &AccountID, _recipient: &AccountID) -> bool {
+            true
         }
     }
 

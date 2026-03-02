@@ -22,6 +22,12 @@ pub mod account_flags {
     pub const LSF_DEPOSIT_AUTH: u32 = 0x00000100;
 }
 
+/// DepositPreauth entry flags
+pub mod deposit_preauth_flags {
+    /// Preauthorization is active
+    pub const LSF_ACTIVE: u32 = 0x00000001;
+}
+
 /// AccountSet transaction flags (asf*)
 /// These are used in the SetFlag/ClearFlag fields of AccountSet transactions
 pub mod account_set_flags {
@@ -53,6 +59,7 @@ pub enum LedgerEntryType {
     FeeRoot = 0x46,         // 'F' - custom to Callchain
     IssueRoot = 0x69,       // 'i' - custom to Callchain
     Invoice = 0x76,         // 'v' - custom to Callchain
+    DepositPreauth = 0x70,  // 'p' - deposit preauthorization
 }
 
 impl LedgerEntryType {
@@ -70,6 +77,7 @@ impl LedgerEntryType {
             0x46 => Some(Self::FeeRoot),
             0x69 => Some(Self::IssueRoot),
             0x76 => Some(Self::Invoice),
+            0x70 => Some(Self::DepositPreauth),
             _ => None,
         }
     }
@@ -107,6 +115,7 @@ pub enum LedgerObject {
     IssueRoot(IssueRoot),
     Invoice(Invoice),
     FeeRoot(FeeRoot),
+    DepositPreauth(DepositPreauth),
 }
 
 /// AccountRoot entry - represents an account in the ledger
@@ -1044,6 +1053,101 @@ impl LedgerEntry for SignerList {
     }
 }
 
+/// DepositPreauth entry - represents a deposit preauthorization
+/// Allows an account to preauthorize another account to send payments to it
+/// even when the recipient has LSF_DEPOSIT_AUTH flag set
+/// LedgerEntryType: ltDEPOSIT_PREAUTH = 'p' (0x70)
+#[derive(Debug, Clone)]
+pub struct DepositPreauth {
+    /// The account that has authorized deposits (the owner)
+    pub account: AccountID,
+    /// The account that is authorized to send deposits
+    pub authorize: AccountID,
+    /// Flags for this preauthorization
+    pub flags: u32,
+    /// Transaction ID that created this entry
+    pub previous_txn_id: UInt256,
+    /// Ledger sequence when this entry was created
+    pub previous_txn_lgr_seq: u32,
+}
+
+impl DepositPreauth {
+    /// Create a new deposit preauthorization
+    pub fn new(account: AccountID, authorize: AccountID) -> Self {
+        Self {
+            account,
+            authorize,
+            flags: deposit_preauth_flags::LSF_ACTIVE,
+            previous_txn_id: UInt256::zero(),
+            previous_txn_lgr_seq: 0,
+        }
+    }
+
+    /// Compute the ledger index for this deposit preauth
+    /// The index is a hash of: account + authorize
+    pub fn ledger_index(&self) -> UInt256 {
+        use crypto::sha256;
+        let mut data = Vec::with_capacity(40);
+        data.extend_from_slice(self.account.as_bytes());
+        data.extend_from_slice(self.authorize.as_bytes());
+        let hash = sha256(&data);
+        UInt256::new(hash)
+    }
+
+    /// Get the entry type
+    pub fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::DepositPreauth
+    }
+
+    /// Check if this preauthorization is active
+    pub fn is_active(&self) -> bool {
+        self.flags & deposit_preauth_flags::LSF_ACTIVE != 0
+    }
+
+    /// Update the previous transaction info
+    pub fn update_previous_txn(&mut self, txn_id: UInt256, lgr_seq: u32) {
+        self.previous_txn_id = txn_id;
+        self.previous_txn_lgr_seq = lgr_seq;
+    }
+}
+
+impl LedgerEntry for DepositPreauth {
+    fn entry_type() -> LedgerEntryType {
+        LedgerEntryType::DepositPreauth
+    }
+
+    fn ledger_index(&self) -> UInt256 {
+        self.ledger_index()
+    }
+
+    fn to_stobject(&self) -> STObject {
+        let mut obj = STObject::new();
+        obj.insert(sf::LEDGER_ENTRY_TYPE, STValue::UInt16(LedgerEntryType::DepositPreauth.as_u16()));
+        obj.insert(sf::ACCOUNT, STValue::Account(self.account));
+        obj.insert(sf::AUTHORIZE, STValue::Account(self.authorize));
+        obj.insert(sf::FLAGS, STValue::UInt32(self.flags));
+        obj.insert(sf::PREVIOUS_TXN_ID, STValue::Hash256(self.previous_txn_id));
+        obj.insert(sf::PREVIOUS_TXN_LGR_SEQ, STValue::UInt32(self.previous_txn_lgr_seq));
+        obj
+    }
+
+    fn from_stobject(obj: &STObject) -> Option<Self> {
+        let account = obj.get_account(sf::ACCOUNT)?;
+        let authorize = obj.get_account(sf::AUTHORIZE)?;
+        let flags = obj.get_uint32(sf::FLAGS).unwrap_or(deposit_preauth_flags::LSF_ACTIVE);
+        let previous_txn_id = obj.get_hash256(sf::PREVIOUS_TXN_ID).unwrap_or(UInt256::zero());
+        let previous_txn_lgr_seq = obj.get_uint32(sf::PREVIOUS_TXN_LGR_SEQ).unwrap_or(0);
+
+        Some(Self {
+            account,
+            authorize,
+            flags,
+            previous_txn_id,
+            previous_txn_lgr_seq,
+        })
+    }
+}
+
 /// LedgerHashes entry - tracks ledger history
 /// LedgerEntryType: ltLEDGER_HASHES = 'h' (0x68)
 #[derive(Debug, Clone)]
@@ -1811,6 +1915,87 @@ impl LedgerState {
         results
     }
 
+    /// Get a deposit preauthorization for a specific account and authorized sender
+    pub fn get_deposit_preauth(&self, account: &AccountID, authorize: &AccountID) -> Option<DepositPreauth> {
+        let temp_preauth = DepositPreauth::new(*account, *authorize);
+        let index = temp_preauth.ledger_index();
+
+        self.state_map.get_item(&index).and_then(|item| {
+            Self::deserialize_deposit_preauth(item.data())
+        })
+    }
+
+    /// Set a deposit preauthorization
+    pub fn set_deposit_preauth(&mut self, preauth: &DepositPreauth) {
+        use shamap::SHAMapItem;
+        let index = preauth.ledger_index();
+        let data = Self::serialize_deposit_preauth(preauth);
+        let item = SHAMapItem::new(index, data);
+        self.state_map.add_item(index, item);
+    }
+
+    /// Delete a deposit preauthorization
+    pub fn delete_deposit_preauth(&mut self, account: &AccountID, authorize: &AccountID) {
+        let temp_preauth = DepositPreauth::new(*account, *authorize);
+        let index = temp_preauth.ledger_index();
+        self.state_map.remove_item(&index);
+    }
+
+    /// Check if an account is authorized to send deposits to another account
+    /// Returns true if:
+    /// 1. The recipient does not require deposit auth, OR
+    /// 2. The sender is the recipient (self-payment), OR
+    /// 3. The sender has a valid deposit preauthorization
+    pub fn is_authorized_to_send(&self, sender: &AccountID, recipient: &AccountID) -> bool {
+        // Self-payments are always allowed
+        if sender == recipient {
+            return true;
+        }
+
+        // Get recipient's account to check if deposit auth is required
+        let recipient_account = match self.get_account_root(recipient) {
+            Some(acc) => acc,
+            None => return true, // If recipient doesn't exist, payment will fail anyway
+        };
+
+        // If recipient doesn't require deposit auth, allow
+        if !recipient_account.requires_deposit_auth() {
+            return true;
+        }
+
+        // Check if sender has a valid deposit preauthorization
+        match self.get_deposit_preauth(recipient, sender) {
+            Some(preauth) => preauth.is_active(),
+            None => false,
+        }
+    }
+
+    /// Get all deposit preauthorizations for an account (as owner)
+    pub fn get_account_deposit_preauths(&self, account: &AccountID) -> Vec<DepositPreauth> {
+        let mut results = Vec::new();
+        for item in self.state_map.iter() {
+            if let Some(preauth) = Self::deserialize_deposit_preauth(item.data()) {
+                if preauth.account == *account {
+                    results.push(preauth);
+                }
+            }
+        }
+        results
+    }
+
+    /// Get all deposit preauthorizations where an account is authorized (as sender)
+    pub fn get_authorized_deposit_preauths(&self, authorize: &AccountID) -> Vec<DepositPreauth> {
+        let mut results = Vec::new();
+        for item in self.state_map.iter() {
+            if let Some(preauth) = Self::deserialize_deposit_preauth(item.data()) {
+                if preauth.authorize == *authorize {
+                    results.push(preauth);
+                }
+            }
+        }
+        results
+    }
+
     // Serialization helpers
     /// Iterate over all entries in the ledger state
     pub fn iter(&self) -> impl Iterator<Item = &shamap::SHAMapItem> {
@@ -2206,6 +2391,36 @@ impl LedgerState {
             signers,
             previous_txn_id: primitives::UInt256::zero(),
             previous_txn_lgr_seq: 0,
+        })
+    }
+
+    fn serialize_deposit_preauth(preauth: &DepositPreauth) -> Vec<u8> {
+        use serialization::Serializer;
+        let mut ser = Serializer::with_capacity(128);
+        ser.add_account(preauth.account);
+        ser.add_account(preauth.authorize);
+        ser.add32(preauth.flags);
+        ser.add256(preauth.previous_txn_id);
+        ser.add32(preauth.previous_txn_lgr_seq);
+        ser.finish()
+    }
+
+    pub fn deserialize_deposit_preauth(data: &[u8]) -> Option<DepositPreauth> {
+        use serialization::SerialIter;
+        let mut iter = SerialIter::new(data);
+
+        let account = iter.get_account().ok()?;
+        let authorize = iter.get_account().ok()?;
+        let flags = iter.get32().ok()?;
+        let previous_txn_id = iter.get256().ok()?;
+        let previous_txn_lgr_seq = iter.get32().ok()?;
+
+        Some(DepositPreauth {
+            account,
+            authorize,
+            flags,
+            previous_txn_id,
+            previous_txn_lgr_seq,
         })
     }
 

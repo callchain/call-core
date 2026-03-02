@@ -54,6 +54,22 @@ pub trait LedgerView {
         &self,
         account: &AccountID,
     ) -> Vec<crate::ledger_entries::NicknameEntry>;
+
+    /// Get a deposit preauthorization
+    fn get_deposit_preauth(
+        &self,
+        account: &AccountID,
+        authorize: &AccountID,
+    ) -> Option<crate::ledger_entries::DepositPreauth>;
+
+    /// Set a deposit preauthorization
+    fn set_deposit_preauth(&mut self, preauth: &crate::ledger_entries::DepositPreauth);
+
+    /// Delete a deposit preauthorization
+    fn delete_deposit_preauth(&mut self, account: &AccountID, authorize: &AccountID);
+
+    /// Check if a sender is authorized to send deposits to a recipient
+    fn is_authorized_to_send(&self, sender: &AccountID, recipient: &AccountID) -> bool;
 }
 
 /// Simple ledger view implementation for testing
@@ -122,6 +138,23 @@ impl LedgerView for BasicLedgerView {
         _account: &AccountID,
     ) -> Vec<crate::ledger_entries::NicknameEntry> {
         Vec::new()
+    }
+
+    fn get_deposit_preauth(
+        &self,
+        _account: &AccountID,
+        _authorize: &AccountID,
+    ) -> Option<crate::ledger_entries::DepositPreauth> {
+        None
+    }
+
+    fn set_deposit_preauth(&mut self, _preauth: &crate::ledger_entries::DepositPreauth) {}
+
+    fn delete_deposit_preauth(&mut self, _account: &AccountID, _authorize: &AccountID) {}
+
+    fn is_authorized_to_send(&self, _sender: &AccountID, _recipient: &AccountID) -> bool {
+        // BasicLedgerView always allows (no deposit auth check)
+        true
     }
 }
 
@@ -196,5 +229,25 @@ impl<'a> LedgerView for MutableLedgerView<'a> {
 
     fn get_account_nicknames(&self, account: &AccountID) -> Vec<crate::ledger_entries::NicknameEntry> {
         self.state.get_account_nicknames(account)
+    }
+
+    fn get_deposit_preauth(
+        &self,
+        account: &AccountID,
+        authorize: &AccountID,
+    ) -> Option<crate::ledger_entries::DepositPreauth> {
+        self.state.get_deposit_preauth(account, authorize)
+    }
+
+    fn set_deposit_preauth(&mut self, preauth: &crate::ledger_entries::DepositPreauth) {
+        self.state.set_deposit_preauth(preauth);
+    }
+
+    fn delete_deposit_preauth(&mut self, account: &AccountID, authorize: &AccountID) {
+        self.state.delete_deposit_preauth(account, authorize);
+    }
+
+    fn is_authorized_to_send(&self, sender: &AccountID, recipient: &AccountID) -> bool {
+        self.state.is_authorized_to_send(sender, recipient)
     }
 }

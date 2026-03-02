@@ -19,7 +19,8 @@ pub enum TxType {
     SignerListSet = 12,
     // 13,14,15 reserved for PayChannel (excluded)
     IssueSet = 16,
-    // 17-19 reserved
+    // 17-18 reserved
+    DepositPreauth = 19,
     TrustSet = 20,
     // Pseudotransactions
     EnableAmendment = 100,
@@ -42,6 +43,7 @@ impl TxType {
             8 => Some(Self::OfferCancel),
             12 => Some(Self::SignerListSet),
             16 => Some(Self::IssueSet),
+            19 => Some(Self::DepositPreauth),
             20 => Some(Self::TrustSet),
             100 => Some(Self::EnableAmendment),
             101 => Some(Self::SetFee),
@@ -137,6 +139,7 @@ pub enum TER {
     temBAD_SIGNER_LIST = -252,
     telINSUFFICIENT_FEE = -394,
     tecINTERNAL = 199,
+    tecNO_ENTRY = 148,
 }
 
 impl TER {
@@ -212,6 +215,8 @@ pub struct Transaction {
     // NicknameSet fields
     pub nickname: Option<Vec<u8>>,
     pub min_offer: Option<Amount>,
+    // DepositPreauth fields
+    pub unauthorize: Option<AccountID>,
     // EnableAmendment fields
     pub amendment_hash: Option<UInt256>,
     pub ledger_sequence: Option<u32>,
@@ -262,6 +267,7 @@ impl Transaction {
             total_supply: None,
             nickname: None,
             min_offer: None,
+            unauthorize: None,
             amendment_hash: None,
             ledger_sequence: None,
             base_fee: None,

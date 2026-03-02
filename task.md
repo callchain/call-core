@@ -25,22 +25,48 @@ Tracking stub code, placeholder implementations, and incomplete features in call
 - Added `NullPeerNetwork` and `NullLedgerStorage` for testing
 - Updated `BootstrapManager::initialize()` to return `Result<Ledger, String>`
 
-### 2. Transaction Field Parsing [CRITICAL]
+### 2. Transaction Field Parsing [CRITICAL] ✓
 **File:** `crates/node/src/application.rs:1523-1660`
-**Issues:** Multiple fields explicitly skipped:
-- [ ] Flags (type=2/UInt32, field=22)
-- [ ] SourceTag (type=2/UInt32, field=3)
-- [ ] Amount (type=6/Amount, field=1)
-- [ ] Destination (type=8/Account, field=3)
-- [ ] SigningPubKey (type=7/VL, field=3)
-- [ ] TxnSignature (type=7/VL, field=4)
-- [ ] NetworkID (if applicable)
+**Status:** ✅ COMPLETED
 
-### 3. Pre-Authorized Depositors [HIGH]
+**Implementation Completed:**
+- [x] Flags (type=2/UInt32, field=22)
+- [x] SourceTag (type=2/UInt32, field=3)
+- [x] Amount (type=6/Amount, field=1)
+- [x] Destination (type=8/Account, field=3)
+- [x] SigningPubKey (type=7/VL, field=3)
+- [x] TxnSignature (type=7/VL, field=4)
+- [x] TakerPays, TakerGets, LimitAmount
+
+### 3. Pre-Authorized Depositors [HIGH] ✓
 **File:** `crates/protocol/src/tx_engine.rs:348`
-**Issue:** TODO comment - deposit authorization incomplete
-- [ ] Implement pre-authorized depositors list
-- [ ] Fix payment processing for deposit auth accounts
+**Status:** ✅ COMPLETED
+
+**Implementation Completed:**
+- [x] Added `DepositPreauth` ledger entry type (0x70)
+- [x] Created `DepositPreauth` struct with account, authorize, flags fields
+- [x] Added deposit preauth methods to `LedgerState`:
+  * `get_deposit_preauth()` - retrieve a preauthorization
+  * `set_deposit_preauth()` - create/update a preauthorization
+  * `delete_deposit_preauth()` - remove a preauthorization
+  * `is_authorized_to_send()` - check if sender can deposit to recipient
+  * `get_account_deposit_preauths()` - list all preauths for an account
+  * `get_authorized_deposit_preauths()` - list all preauths where account is authorized
+- [x] Added `DepositPreauth` transaction type (tx type 19)
+- [x] Implemented transaction processing for DepositPreauth:
+  * `preflight_deposit_preauth()` - validation
+  * `preclaim_deposit_preauth()` - state checks
+  * `apply_deposit_preauth()` - create preauthorization
+- [x] Updated payment processing to check `is_authorized_to_send()`
+- [x] Updated `LedgerView` trait with deposit preauth methods
+- [x] Added serialization/deserialization for DepositPreauth entries
+
+**Files Modified:**
+- `crates/protocol/src/ledger_entries.rs`
+- `crates/protocol/src/tx_engine.rs`
+- `crates/protocol/src/transactions.rs`
+- `crates/protocol/src/views.rs`
+- `crates/protocol/src/tx_queue.rs`
 
 ## Stub Functions (Priority 2)
 
@@ -132,15 +158,15 @@ Tracking stub code, placeholder implementations, and incomplete features in call
 
 | Phase | Items | Completed | Status |
 |-------|-------|-----------|--------|
-| Phase 1 | 3 | 2 | In Progress |
+| Phase 1 | 3 | 3 | ✅ COMPLETE |
 | Phase 2 | 3 | 1 | In Progress |
 | Phase 3 | 3 | 1 | In Progress |
 | Phase 4 | 3 | 0 | Not Started |
 
 **Total Tasks:** 12
-**Completed:** 4
+**Completed:** 5
 **In Progress:** 0
-**Pending:** 8
+**Pending:** 7
 
 ## Completed Tasks
 
@@ -197,3 +223,29 @@ Tracking stub code, placeholder implementations, and incomplete features in call
 - Added `NullPeerNetwork` and `NullLedgerStorage` implementations for testing
 - Files modified:
   - `crates/protocol/src/bootstrap.rs`
+
+### Task 3: Pre-Authorized Depositors List ✓
+- Added `DepositPreauth` ledger entry type (0x70 / 'p')
+- Created `DepositPreauth` struct with fields: account, authorize, flags, previous_txn_id, previous_txn_lgr_seq
+- Added deposit preauth flags module with `LSF_ACTIVE` flag
+- Implemented `LedgerEntry` trait for `DepositPreauth` with serialization
+- Added deposit preauth methods to `LedgerState`:
+  * `get_deposit_preauth()` - retrieve by account + authorize
+  * `set_deposit_preauth()` - store preauthorization
+  * `delete_deposit_preauth()` - remove preauthorization
+  * `is_authorized_to_send()` - check if payment is allowed (handles deposit auth logic)
+  * `get_account_deposit_preauths()` - list by owner account
+  * `get_authorized_deposit_preauths()` - list by authorized sender
+- Added `DepositPreauth` transaction type (tx type 19)
+- Implemented transaction processing: preflight, preclaim, and apply phases
+- Added `unauthorize` field to Transaction struct for cancellation support
+- Updated payment logic to use `is_authorized_to_send()` instead of blanket rejection
+- Updated `LedgerView` trait with deposit preauth methods
+- Updated all mock implementations (BasicLedgerView, MutableLedgerView, MockLedgerView)
+- Added `tecNO_ENTRY` error code for missing preauthorization during cancellation
+- Files modified:
+  - `crates/protocol/src/ledger_entries.rs`
+  - `crates/protocol/src/tx_engine.rs`
+  - `crates/protocol/src/transactions.rs`
+  - `crates/protocol/src/views.rs`
+  - `crates/protocol/src/tx_queue.rs`

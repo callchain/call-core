@@ -122,6 +122,7 @@ fn calculate_tx_fee_units(tx: &Transaction) -> u32 {
         TxType::SignerListSet => 2, // More complex (multi-sig)
         TxType::IssueSet => 2,      // Token issuance
         TxType::NicknameSet => 1,   // Nickname registration
+        TxType::DepositPreauth => 1, // Deposit preauthorization
         // Pseudotransactions have no fee
         TxType::EnableAmendment => 0,
         TxType::SetFee => 0,
@@ -575,6 +576,22 @@ mod tests {
             _account: &AccountID,
         ) -> Vec<crate::ledger_entries::NicknameEntry> {
             Vec::new()
+        }
+
+        fn get_deposit_preauth(
+            &self,
+            _account: &AccountID,
+            _authorize: &AccountID,
+        ) -> Option<crate::ledger_entries::DepositPreauth> {
+            None
+        }
+
+        fn set_deposit_preauth(&mut self, _preauth: &crate::ledger_entries::DepositPreauth) {}
+
+        fn delete_deposit_preauth(&mut self, _account: &AccountID, _authorize: &AccountID) {}
+
+        fn is_authorized_to_send(&self, _sender: &AccountID, _recipient: &AccountID) -> bool {
+            true
         }
     }
 
