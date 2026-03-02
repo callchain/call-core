@@ -149,6 +149,128 @@ impl SHAMap {
         self.get_node(key).and_then(|n| n.as_leaf().map(|l| l.item()))
     }
 
+    /// Remove an item from the map by key
+    /// Returns true if the item was found and removed, false otherwise
+    pub fn remove_item(&mut self, key: &UInt256) -> bool {
+        if self.root.is_none() {
+            return false;
+        }
+
+        let (removed, new_root) = Self::remove_recursive(self.root.take(), key, 0);
+        self.root = new_root;
+        removed
+    }
+
+    /// Recursive helper for remove_item
+    /// Returns (was_removed, new_node) where new_node may be None if this branch is now empty
+    fn remove_recursive(
+        node: Option<Box<SHAMapAbstractNode>>,
+        key: &UInt256,
+        depth: usize,
+    ) -> (bool, Option<Box<SHAMapAbstractNode>>) {
+        if depth >= 64 {
+            return (false, node);
+        }
+
+        let mut node = match node {
+            Some(n) => n,
+            None => return (false, None),
+        };
+
+        match node.as_mut() {
+            SHAMapAbstractNode::Leaf(leaf) => {
+                if leaf.item().key() == *key {
+                    // Found the leaf to remove
+                    return (true, None);
+                }
+                // Key doesn't match, keep the leaf
+                (false, Some(node))
+            }
+            SHAMapAbstractNode::Inner(inner) => {
+                let branch = Self::get_branch_index(key, depth);
+
+                if !inner.is_branch_set(branch) {
+                    return (false, Some(node));
+                }
+
+                // Get the child and recursively remove
+                let child = inner.take_child(branch);
+                let (removed, new_child) = Self::remove_recursive(child, key, depth + 1);
+
+                if !removed {
+                    // Not found in this branch, restore child and return
+                    if let Some(child) = new_child {
+                        inner.set_child(branch, *child);
+                    }
+                    return (false, Some(node));
+                }
+
+                // Item was removed from child
+                if let Some(child) = new_child {
+                    // Child still exists, restore it
+                    inner.set_child(branch, *child);
+                    (true, Some(node))
+                } else {
+                    // Child is now empty, remove this branch
+                    inner.remove_child(branch);
+
+                    // Check if this inner node now has only one child
+                    // If so, we can collapse it
+                    let remaining_children: Vec<_> = (0..16)
+                        .filter(|&i| inner.is_branch_set(i))
+                        .collect();
+
+                    if remaining_children.is_empty() {
+                        // No children left, remove this node
+                        (true, None)
+                    } else if remaining_children.len() == 1 {
+                        // Only one child - in some map implementations we could
+                        // collapse, but for SHAMap we need to maintain the structure
+                        // for hash consistency, so keep the inner node
+                        (true, Some(node))
+                    } else {
+                        (true, Some(node))
+                    }
+                }
+            }
+            SHAMapAbstractNode::InnerV2(inner_v2) => {
+                let branch = Self::get_branch_index(key, depth);
+
+                if !inner_v2.is_branch_set(branch) {
+                    return (false, Some(node));
+                }
+
+                // Get the child and recursively remove
+                let child = inner_v2.take_child(branch);
+                let (removed, new_child) = Self::remove_recursive(child, key, depth + 1);
+
+                if !removed {
+                    // Not found in this branch, restore child and return
+                    if let Some(child) = new_child {
+                        inner_v2.set_child(branch, *child);
+                    }
+                    return (false, Some(node));
+                }
+
+                // Item was removed from child
+                if let Some(child) = new_child {
+                    // Child still exists, restore it
+                    inner_v2.set_child(branch, *child);
+                    (true, Some(node))
+                } else {
+                    // Child is now empty, remove this branch
+                    inner_v2.remove_child(branch);
+
+                    if inner_v2.is_empty() {
+                        (true, None)
+                    } else {
+                        (true, Some(node))
+                    }
+                }
+            }
+        }
+    }
+
     fn get_node(&self, key: &UInt256) -> Option<&SHAMapAbstractNode> {
         let mut current = self.root.as_deref()?;
         let mut depth = 0;

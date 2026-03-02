@@ -1728,10 +1728,14 @@ impl LedgerState {
     }
 
     pub fn delete_offer(&mut self, account: &AccountID, sequence: u32) {
-        // Note: SHAMap doesn't have a direct remove method in the current API
-        // This would require implementing a remove operation
-        let _ = account;
-        let _ = sequence;
+        // Compute the ledger index for this offer
+        let taker_pays = Amount::call(0);
+        let taker_gets = Amount::call(0);
+        let temp_offer = OfferEntry::new(*account, sequence, taker_pays, taker_gets);
+        let index = temp_offer.ledger_index();
+
+        // Remove from state map
+        self.state_map.remove_item(&index);
     }
 
     pub fn get_nickname(&self, nickname: &[u8]) -> Option<NicknameEntry> {

@@ -4,6 +4,7 @@ use consensus::{Consensus, ConsensusParms, ConsensusMode, ConsensusPhase};
 use network::Overlay;
 use primitives::{AccountID, NodeID, UInt256};
 use protocol::{GenesisConfig, GenesisLoader};
+use serialization::Amount;
 use storage::Database;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -1485,6 +1486,15 @@ impl Application {
         let mut account: Option<primitives::AccountID> = None;
         let mut sequence: Option<u32> = None;
         let mut fee: u64 = 0;
+        let mut flags: Option<u32> = None;
+        let mut source_tag: Option<u32> = None;
+        let mut amount: Option<Amount> = None;
+        let mut destination: Option<primitives::AccountID> = None;
+        let mut signing_pub_key: Option<Vec<u8>> = None;
+        let mut txn_signature: Option<Vec<u8>> = None;
+        let mut taker_pays: Option<Amount> = None;
+        let mut taker_gets: Option<Amount> = None;
+        let mut limit_amount: Option<Amount> = None;
 
         // Parse fields using field IDs
         while !iter.eof() {
@@ -1520,50 +1530,50 @@ impl Application {
                         .map_err(|e| anyhow::anyhow!("Failed to read fee: {}", e))?;
                     fee = amount.mantissa as u64;
                 }
-                // Flags (type=2/UInt32, field=22) - skip for now
+                // Flags (type=2/UInt32, field=22)
                 (2, 22) => {
-                    let _ = iter.get32()
-                        .map_err(|e| anyhow::anyhow!("Failed to read flags: {}", e))?;
+                    flags = Some(iter.get32()
+                        .map_err(|e| anyhow::anyhow!("Failed to read flags: {}", e))?);
                 }
-                // SourceTag (type=2/UInt32, field=3) - skip for now
+                // SourceTag (type=2/UInt32, field=3)
                 (2, 3) => {
-                    let _ = iter.get32()
-                        .map_err(|e| anyhow::anyhow!("Failed to read source tag: {}", e))?;
+                    source_tag = Some(iter.get32()
+                        .map_err(|e| anyhow::anyhow!("Failed to read source tag: {}", e))?);
                 }
-                // Amount (type=6/Amount, field=1) - skip for now
+                // Amount (type=6/Amount, field=1) - for Payment
                 (6, 1) => {
-                    let _ = iter.get_amount()
-                        .map_err(|e| anyhow::anyhow!("Failed to read amount: {}", e))?;
+                    amount = Some(iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read amount: {}", e))?);
                 }
                 // TakerPays (type=6/Amount, field=5) - for OfferCreate
                 (6, 5) => {
-                    let _ = iter.get_amount()
-                        .map_err(|e| anyhow::anyhow!("Failed to read taker pays: {}", e))?;
+                    taker_pays = Some(iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read taker pays: {}", e))?);
                 }
                 // TakerGets (type=6/Amount, field=6) - for OfferCreate
                 (6, 6) => {
-                    let _ = iter.get_amount()
-                        .map_err(|e| anyhow::anyhow!("Failed to read taker gets: {}", e))?;
+                    taker_gets = Some(iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read taker gets: {}", e))?);
                 }
                 // LimitAmount (type=6/Amount, field=17) - for TrustSet
                 (6, 17) => {
-                    let _ = iter.get_amount()
-                        .map_err(|e| anyhow::anyhow!("Failed to read limit amount: {}", e))?;
+                    limit_amount = Some(iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read limit amount: {}", e))?);
                 }
-                // Destination (type=8/Account, field=3) - skip for now
+                // Destination (type=8/Account, field=3) - for Payment
                 (8, 3) => {
-                    let _ = iter.get_account()
-                        .map_err(|e| anyhow::anyhow!("Failed to read destination: {}", e))?;
+                    destination = Some(iter.get_account()
+                        .map_err(|e| anyhow::anyhow!("Failed to read destination: {}", e))?);
                 }
-                // SigningPubKey (type=7/VL, field=3) - skip
+                // SigningPubKey (type=7/VL, field=3)
                 (7, 3) => {
-                    let _ = iter.get_vl()
-                        .map_err(|e| anyhow::anyhow!("Failed to read signing pub key: {}", e))?;
+                    signing_pub_key = Some(iter.get_vl()
+                        .map_err(|e| anyhow::anyhow!("Failed to read signing pub key: {}", e))?);
                 }
-                // TxnSignature (type=7/VL, field=4) - skip
+                // TxnSignature (type=7/VL, field=4)
                 (7, 4) => {
-                    let _ = iter.get_vl()
-                        .map_err(|e| anyhow::anyhow!("Failed to read txn signature: {}", e))?;
+                    txn_signature = Some(iter.get_vl()
+                        .map_err(|e| anyhow::anyhow!("Failed to read txn signature: {}", e))?);
                 }
                 // Unknown field - skip based on type
                 (type_id, field_num) => {
@@ -1698,6 +1708,15 @@ impl Application {
         // Create transaction with parsed fields
         let mut tx = protocol::Transaction::new(tx_type, account, sequence);
         tx.set_fee(fee);
+        tx.flags = flags;
+        tx.source_tag = source_tag;
+        tx.amount = amount;
+        tx.destination = destination;
+        tx.signing_pub_key = signing_pub_key;
+        tx.txn_signature = txn_signature;
+        tx.taker_pays = taker_pays;
+        tx.taker_gets = taker_gets;
+        tx.limit_amount = limit_amount;
 
         Ok(tx)
     }

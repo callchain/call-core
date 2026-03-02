@@ -51,6 +51,15 @@ impl SHAMapInnerNode {
         self.hashes[branch] = UInt256::zero();
     }
 
+    /// Take ownership of a child node, removing it from this inner node
+    pub fn take_child(&mut self, branch: usize) -> Option<Box<crate::SHAMapAbstractNode>> {
+        if self.is_branch_set(branch) {
+            self.is_branch &= !(1 << branch);
+            self.hashes[branch] = UInt256::zero();
+        }
+        self.children[branch].take()
+    }
+
     pub fn get_hash(&self, branch: usize) -> UInt256 {
         self.hashes[branch]
     }
@@ -146,6 +155,23 @@ impl SHAMapInnerNodeV2 {
 
     pub fn set_child(&mut self, branch: usize, child: crate::SHAMapAbstractNode) {
         self.inner.set_child(branch, child);
+    }
+
+    pub fn remove_child(&mut self, branch: usize) {
+        self.inner.remove_child(branch);
+    }
+
+    /// Take ownership of a child node, removing it from this inner node
+    pub fn take_child(&mut self, branch: usize) -> Option<Box<crate::SHAMapAbstractNode>> {
+        self.inner.take_child(branch)
+    }
+
+    pub fn is_branch_set(&self, branch: usize) -> bool {
+        self.inner.is_branch_set(branch)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_branch == 0
     }
 
     pub fn get_depth(&self) -> usize {
