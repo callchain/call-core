@@ -239,6 +239,49 @@ impl GenesisConfig {
             return Err(GenesisError::Validation("ledgerMaxCloseTime must be greater than ledgerMinCloseTime".to_string()));
         }
 
+        // Validate network name
+        if self.config.network_name.is_empty() {
+            return Err(GenesisError::Validation("Network name cannot be empty".to_string()));
+        }
+
+        // Validate reserve settings
+        if self.config.fee_settings.reserve_base == 0 {
+            return Err(GenesisError::Validation("Reserve base cannot be 0".to_string()));
+        }
+
+        if self.config.fee_settings.reserve_increment == 0 {
+            return Err(GenesisError::Validation("Reserve increment cannot be 0".to_string()));
+        }
+
+        // Validate all allocation addresses and balances
+        for (address, account) in &self.allocations {
+            // Validate address format
+            Self::parse_address(address)?;
+
+            // Validate balance is a valid number and not zero
+            let balance = account.balance.parse::<u64>()
+                .map_err(|_| GenesisError::Validation(format!("Invalid balance for {}: {}", address, account.balance)))?;
+
+            if balance == 0 {
+                return Err(GenesisError::Validation(format!("Balance for {} cannot be 0", address)));
+            }
+
+            // Validate sequence is valid
+            if account.sequence == 0 {
+                return Err(GenesisError::Validation(format!("Sequence for {} must be greater than 0", address)));
+            }
+        }
+
+        // Validate validators if present
+        for (i, validator) in self.validators.iter().enumerate() {
+            if validator.node_id.is_empty() {
+                return Err(GenesisError::Validation(format!("Validator {} has empty node_id", i)));
+            }
+            if validator.public_key.is_empty() {
+                return Err(GenesisError::Validation(format!("Validator {} has empty public_key", i)));
+            }
+        }
+
         Ok(())
     }
 
