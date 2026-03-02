@@ -17,6 +17,59 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
+/// Trait for network peer communication
+pub trait PeerNetwork: Send + Sync {
+    /// Broadcast a GetLedger request to connected peers
+    fn broadcast_get_ledger(&self, ledger_index: LedgerIndex, ledger_hash: Option<UInt256>);
+    /// Send GetLedger request to a specific peer
+    fn send_get_ledger(&self, peer_id: &AccountID, ledger_index: LedgerIndex, ledger_hash: Option<UInt256>);
+    /// Get list of connected peers
+    fn get_connected_peers(&self) -> Vec<AccountID>;
+    /// Check if we have any connected peers
+    fn has_peers(&self) -> bool;
+}
+
+/// Trait for persistent ledger storage
+pub trait LedgerStorage: Send + Sync {
+    /// Load a ledger from storage by its hash
+    fn load_ledger(&self, hash: &UInt256) -> Option<Ledger>;
+    /// Load a ledger from storage by its sequence number
+    fn load_ledger_by_index(&self, index: LedgerIndex) -> Option<Ledger>;
+    /// Save a ledger to storage
+    fn save_ledger(&self, ledger: &Ledger) -> Result<(), String>;
+    /// Check if a ledger exists in storage
+    fn has_ledger(&self, hash: &UInt256) -> bool;
+    /// Get the highest ledger sequence we have stored
+    fn get_latest_ledger_index(&self) -> Option<LedgerIndex>;
+    /// Load the genesis ledger from storage
+    fn load_genesis_ledger(&self) -> Option<Ledger>;
+    /// Save the genesis ledger to storage
+    fn save_genesis_ledger(&self, ledger: &Ledger) -> Result<(), String>;
+}
+
+/// Null implementation of PeerNetwork for testing
+pub struct NullPeerNetwork;
+
+impl PeerNetwork for NullPeerNetwork {
+    fn broadcast_get_ledger(&self, _ledger_index: LedgerIndex, _ledger_hash: Option<UInt256>) {}
+    fn send_get_ledger(&self, _peer_id: &AccountID, _ledger_index: LedgerIndex, _ledger_hash: Option<UInt256>) {}
+    fn get_connected_peers(&self) -> Vec<AccountID> { Vec::new() }
+    fn has_peers(&self) -> bool { false }
+}
+
+/// Null implementation of LedgerStorage for testing
+pub struct NullLedgerStorage;
+
+impl LedgerStorage for NullLedgerStorage {
+    fn load_ledger(&self, _hash: &UInt256) -> Option<Ledger> { None }
+    fn load_ledger_by_index(&self, _index: LedgerIndex) -> Option<Ledger> { None }
+    fn save_ledger(&self, _ledger: &Ledger) -> Result<(), String> { Ok(()) }
+    fn has_ledger(&self, _hash: &UInt256) -> bool { false }
+    fn get_latest_ledger_index(&self) -> Option<LedgerIndex> { None }
+    fn load_genesis_ledger(&self) -> Option<Ledger> { None }
+    fn save_genesis_ledger(&self, _ledger: &Ledger) -> Result<(), String> { Ok(()) }
+}
+
 /// Bootstrap configuration
 #[derive(Debug, Clone)]
 pub struct BootstrapConfig {
@@ -127,6 +180,10 @@ pub struct LedgerSynchronizer {
     processed_ledgers: HashSet<UInt256>,
     /// Current ledger sequence we have
     current_ledger_seq: LedgerIndex,
+    /// Network peer interface for sending requests
+    network: Option<Box<dyn PeerNetwork>>,
+    /// Storage interface for loading/saving ledgers
+    storage: Option<Box<dyn LedgerStorage>>,
 }
 
 impl LedgerSynchronizer {
@@ -139,6 +196,41 @@ impl LedgerSynchronizer {
             validated_queue: VecDeque::new(),
             processed_ledgers: HashSet::new(),
             current_ledger_seq: 0,
+            network: None,
+            storage: None,
+        }
+    }
+
+    /// Set the network interface for peer communication
+    pub fn set_network(&mut self, network: Box<dyn PeerNetwork>) {
+        self.network = Some(network);
+    }
+
+    /// Set the storage interface for persistent ledger storage
+    pub fn set_storage(&mut self, storage: Box<dyn LedgerStorage>) {
+        self.storage = Some(storage);
+    }
+
+    /// Try to load ledger from storage before requesting from network
+    fn try_load_from_storage(&mut self, ledger_index: LedgerIndex) -> Option<Ledger> {
+        if let Some(ref storage) = self.storage {
+            // Try to load by index first
+            if let Some(ledger) = storage.load_ledger_by_index(ledger_index) {
+                info!("Loaded ledger {} from storage", ledger_index);
+                return Some(ledger);
+            }
+        }
+        None
+    }
+
+    /// Save a validated ledger to storage
+    fn save_to_storage(&self, ledger: &Ledger) {
+        if let Some(ref storage) = self.storage {
+            if let Err(e) = storage.save_ledger(ledger) {
+                warn!("Failed to save ledger {} to storage: {}", ledger.get_seq(), e);
+            } else {
+                debug!("Saved ledger {} to storage", ledger.get_seq());
+            }
         }
     }
 
@@ -155,15 +247,46 @@ impl LedgerSynchronizer {
             (target_ledger - self.current_ledger_seq) as usize;
         self.stats.start_time = Instant::now();
 
-        // Queue ledgers for fetching
-        // Request ledgers by sequence number - the actual hash will be
-        // determined from validator proposals or checkpoint data
+        // Try to load ledgers from storage first, then request from network for missing ones
         for seq in (self.current_ledger_seq + 1)..=target_ledger {
+            // First try to load from local storage
+            if let Some(ledger) = self.try_load_from_storage(seq) {
+                // Verify this is the correct sequence
+                if ledger.get_seq() == seq {
+                    self.validated_queue.push_back(ledger);
+                    self.stats.ledgers_fetched += 1;
+                    continue;
+                }
+            }
+
+            // Not in storage, request from network
             // Use a placeholder hash derived from the sequence number
             // This allows us to track pending requests while we wait for
             // validators to provide the actual hashes
             let placeholder_hash = self.compute_placeholder_hash(seq);
             self.request_ledger_by_seq(placeholder_hash, seq);
+        }
+
+        // Apply any ledgers we loaded from storage
+        self.apply_queued_ledgers();
+
+        // Check if we're already synced after loading from storage
+        if self.current_ledger_seq >= self.stats.target_ledger {
+            self.stats.status = SyncStatus::Synced;
+            info!("Ledger sync complete: all ledgers loaded from storage");
+        }
+    }
+
+    /// Apply all validated ledgers in the queue
+    fn apply_queued_ledgers(&mut self) {
+        while let Some(ledger) = self.validated_queue.pop_front() {
+            let hash = ledger.get_hash();
+            let seq = ledger.get_seq();
+
+            self.processed_ledgers.insert(hash);
+            self.current_ledger_seq = seq;
+
+            debug!("Applied ledger {} (hash: {})", seq, hash.to_hex());
         }
     }
 
@@ -194,7 +317,15 @@ impl LedgerSynchronizer {
 
         debug!("Requesting ledger {} (placeholder hash)", ledger_index);
 
-        // In a real implementation, this would broadcast GetLedger requests to peers
+        // Broadcast GetLedger request to all connected peers
+        if let Some(ref network) = self.network {
+            if network.has_peers() {
+                network.broadcast_get_ledger(ledger_index, None);
+                debug!("Broadcast GetLedger request for ledger {} to peers", ledger_index);
+            } else {
+                debug!("No connected peers to request ledger {}", ledger_index);
+            }
+        }
     }
 
     /// Update the placeholder hash with the actual hash from validators
@@ -232,7 +363,16 @@ impl LedgerSynchronizer {
             ledger_hash.to_hex()
         );
 
-        // In a real implementation, this would send GetLedger messages to peers
+        // Broadcast GetLedger request to all connected peers
+        if let Some(ref network) = self.network {
+            if network.has_peers() {
+                network.broadcast_get_ledger(ledger_index, Some(ledger_hash));
+                debug!("Broadcast GetLedger request for ledger {} (hash: {}) to peers",
+                    ledger_index, ledger_hash.to_hex());
+            } else {
+                debug!("No connected peers to request ledger {}", ledger_index);
+            }
+        }
     }
 
     /// Receive a ledger from a peer
@@ -347,6 +487,9 @@ impl LedgerSynchronizer {
         self.stats.ledgers_fetched += 1;
         self.stats.current_ledger = seq;
 
+        // Save to persistent storage
+        self.save_to_storage(&ledger);
+
         debug!("Applied ledger {} (hash: {})", seq, hash.to_hex());
 
         // Check if we're fully synced
@@ -430,16 +573,117 @@ pub struct GenesisLoader;
 
 impl GenesisLoader {
     /// Load or create the genesis ledger
-    pub fn load_or_create(_genesis_config: &GenesisConfig) -> Ledger {
+    ///
+    /// Tries the following in order:
+    /// 1. Load from persistent storage if available
+    /// 2. Create from provided config and save to storage
+    /// 3. If no config, use default devnet genesis
+    pub fn load_or_create(
+        genesis_config: &GenesisConfig,
+        storage: Option<&dyn LedgerStorage>,
+    ) -> Result<Ledger, String> {
         info!("Loading genesis ledger");
 
-        // In a real implementation, this would:
-        // 1. Try to load from disk
-        // 2. If not found, create from config
-        // 3. Verify hash matches expected
+        // 1. Try to load from persistent storage first
+        if let Some(store) = storage {
+            if let Some(ledger) = store.load_genesis_ledger() {
+                info!("Loaded genesis ledger from storage (seq={})", ledger.get_seq());
 
-        let genesis_info = LedgerInfo::genesis();
-        Ledger::new(genesis_info)
+                // Verify the loaded ledger hash matches expected if configured
+                if genesis_config.expected_hash != UInt256::zero()
+                    && ledger.get_hash() != genesis_config.expected_hash
+                {
+                    return Err(format!(
+                        "Genesis hash mismatch: loaded={} expected={}",
+                        ledger.get_hash().to_hex(),
+                        genesis_config.expected_hash.to_hex()
+                    ));
+                }
+
+                return Ok(ledger);
+            }
+        }
+
+        // 2. Not found in storage - create from config
+        info!("Genesis ledger not in storage, creating from config");
+        let (genesis_info, initial_txs) =
+            Self::create_with_accounts(&genesis_config.initial_accounts);
+
+        let mut ledger = Ledger::new(genesis_info);
+
+        // Apply initial funding transactions to create account states
+        // Note: In a real implementation, these would create AccountRoot entries
+        for tx in initial_txs {
+            debug!("Genesis transaction: {:?}", tx.tx_type);
+        }
+
+        // Update ledger hashes
+        ledger.update_hashes();
+
+        // Verify against expected hash
+        if genesis_config.expected_hash != UInt256::zero()
+            && ledger.get_hash() != genesis_config.expected_hash
+        {
+            return Err(format!(
+                "Computed genesis hash mismatch: computed={} expected={}",
+                ledger.get_hash().to_hex(),
+                genesis_config.expected_hash.to_hex()
+            ));
+        }
+
+        info!("Created genesis ledger with hash: {}", ledger.get_hash().to_hex());
+
+        // 3. Save to storage for future boots
+        if let Some(store) = storage {
+            if let Err(e) = store.save_genesis_ledger(&ledger) {
+                warn!("Failed to save genesis ledger to storage: {}", e);
+            } else {
+                info!("Saved genesis ledger to storage");
+            }
+        }
+
+        Ok(ledger)
+    }
+
+    /// Load genesis ledger, falling back to network if not available locally
+    ///
+    /// This is used when bootstrapping a new node that doesn't have any ledger history.
+    /// It will:
+    /// 1. Try to load from local storage
+    /// 2. If not found, request from network peers
+    /// 3. Fall back to creating from config if network is unavailable
+    pub async fn load_or_create_with_fallback(
+        genesis_config: &GenesisConfig,
+        storage: Option<&dyn LedgerStorage>,
+        network: Option<&dyn PeerNetwork>,
+    ) -> Result<Ledger, String> {
+        // First try local storage
+        match Self::load_or_create(genesis_config, storage) {
+            Ok(ledger) => Ok(ledger),
+            Err(e) => {
+                warn!("Failed to load genesis from storage: {}", e);
+
+                // Try to fetch from network if available
+                if let Some(net) = network {
+                    if net.has_peers() {
+                        info!("Requesting genesis ledger from network peers");
+                        net.broadcast_get_ledger(1, None); // Genesis is ledger 1
+
+                        // Note: In a real implementation, we'd wait for responses
+                        // For now, fall back to creating from config
+                        warn!("Network fetch not yet implemented, creating from config");
+                    }
+                }
+
+                // Fall back to creating from config without storage
+                let (genesis_info, _initial_txs) =
+                    Self::create_with_accounts(&genesis_config.initial_accounts);
+                let mut ledger = Ledger::new(genesis_info);
+                ledger.update_hashes();
+
+                Ok(ledger)
+            }
+        }
     }
 
     /// Create a genesis ledger with initial accounts
@@ -559,6 +803,8 @@ pub struct BootstrapManager {
     _genesis_config: GenesisConfig,
     synchronizer: Option<LedgerSynchronizer>,
     peer_discovery: PeerDiscovery,
+    network: Option<Box<dyn PeerNetwork>>,
+    storage: Option<Box<dyn LedgerStorage>>,
 }
 
 impl BootstrapManager {
@@ -570,20 +816,45 @@ impl BootstrapManager {
             _genesis_config,
             synchronizer: None,
             peer_discovery,
+            network: None,
+            storage: None,
         }
     }
 
+    /// Set the network interface for peer communication
+    pub fn set_network(&mut self, network: Box<dyn PeerNetwork>) {
+        self.network = Some(network);
+    }
+
+    /// Set the storage interface for persistent ledger storage
+    pub fn set_storage(&mut self, storage: Box<dyn LedgerStorage>) {
+        self.storage = Some(storage);
+    }
+
     /// Initialize the node (load genesis, start sync if needed)
-    pub fn initialize(&mut self) -> Ledger {
+    pub fn initialize(&mut self) -> Result<Ledger, String> {
         info!("Initializing node bootstrap");
 
-        // Load genesis ledger
-        let genesis = GenesisLoader::load_or_create(&self._genesis_config);
+        // Load genesis ledger from storage or create from config
+        let storage_ref = self.storage.as_ref().map(|s| s.as_ref());
+        let genesis = GenesisLoader::load_or_create(&self._genesis_config, storage_ref)?;
 
-        // Initialize synchronizer
-        self.synchronizer = Some(LedgerSynchronizer::new(self.config.clone()));
+        // Initialize synchronizer with network and storage
+        let mut synchronizer = LedgerSynchronizer::new(self.config.clone());
+        if let Some(network) = self.network.take() {
+            synchronizer.set_network(network);
+        }
+        if let Some(storage) = self.storage.take() {
+            synchronizer.set_storage(storage);
+        }
+        self.synchronizer = Some(synchronizer);
 
-        genesis
+        // Set current ledger sequence from genesis
+        if let Some(ref mut sync) = self.synchronizer {
+            sync.current_ledger_seq = genesis.get_seq();
+        }
+
+        Ok(genesis)
     }
 
     /// Start synchronization to target ledger
@@ -714,11 +985,40 @@ mod tests {
         let _genesis_config = GenesisConfig::default();
         let mut manager = BootstrapManager::new(config, _genesis_config);
 
-        let genesis = manager.initialize();
+        // Set null storage for testing
+        manager.set_storage(Box::new(NullLedgerStorage));
+
+        let genesis = manager.initialize().expect("initialize should succeed");
         assert_eq!(genesis.get_seq(), 1);
 
         assert_eq!(manager.sync_status(), SyncStatus::Idle);
         assert!(!manager.is_synced());
+    }
+
+    #[test]
+    fn test_ledger_synchronizer_with_null_network() {
+        let config = BootstrapConfig::default();
+        let mut sync = LedgerSynchronizer::new(config);
+
+        // Set null network and storage
+        sync.set_network(Box::new(NullPeerNetwork));
+        sync.set_storage(Box::new(NullLedgerStorage));
+
+        // Should still work without panicking
+        sync.start_sync(10);
+        assert_eq!(sync.status(), SyncStatus::Backfilling);
+    }
+
+    #[test]
+    fn test_genesis_loader_with_null_storage() {
+        let genesis_config = GenesisConfig::default();
+
+        // Should create genesis without storage
+        let result = GenesisLoader::load_or_create(&genesis_config, None);
+        assert!(result.is_ok());
+
+        let ledger = result.unwrap();
+        assert_eq!(ledger.get_seq(), 1);
     }
 
     #[test]

@@ -132,8 +132,8 @@ Tracking stub code, placeholder implementations, and incomplete features in call
 | Phase 4 | 3 | 0 | Not Started |
 
 **Total Tasks:** 12
-**Completed:** 2
-**In Progress:** 1
+**Completed:** 3
+**In Progress:** 0
 **Pending:** 9
 
 ## Completed Tasks
@@ -163,3 +163,17 @@ Tracking stub code, placeholder implementations, and incomplete features in call
   - `crates/shamap/src/map.rs`
   - `crates/shamap/src/inner_node.rs`
   - `crates/protocol/src/ledger_entries.rs`
+
+### Task 7: Genesis Validation ✓
+- Add network name validation (must not be empty)
+- Add reserve settings validation (base and increment must not be 0)
+- Add per-allocation validation:
+  * Validate address format for each allocation
+  * Validate balance is a valid number
+  * Validate balance is not 0
+  * Validate sequence > 0
+- Add validator configuration validation:
+  * Check node_id is not empty
+  * Check public_key is not empty
+- Files modified:
+  - `crates/protocol/src/genesis.rs`
