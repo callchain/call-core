@@ -1535,6 +1535,21 @@ impl Application {
                     let _ = iter.get_amount()
                         .map_err(|e| anyhow::anyhow!("Failed to read amount: {}", e))?;
                 }
+                // TakerPays (type=6/Amount, field=5) - for OfferCreate
+                (6, 5) => {
+                    let _ = iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read taker pays: {}", e))?;
+                }
+                // TakerGets (type=6/Amount, field=6) - for OfferCreate
+                (6, 6) => {
+                    let _ = iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read taker gets: {}", e))?;
+                }
+                // LimitAmount (type=6/Amount, field=17) - for TrustSet
+                (6, 17) => {
+                    let _ = iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read limit amount: {}", e))?;
+                }
                 // Destination (type=8/Account, field=3) - skip for now
                 (8, 3) => {
                     let _ = iter.get_account()
@@ -1563,8 +1578,107 @@ impl Application {
                         6 => { let _ = iter.get_amount()?; } // Amount
                         7 => { let _ = iter.get_vl()?; } // VL
                         8 => { let _ = iter.get_account()?; } // Account
+                        9 => { let _ = iter.get_vl()?; } // VariableLength (sometimes used)
+                        10 => { let _ = iter.get_vl()?; } // Another VL variant
+                        11 => { let _ = iter.get_vl()?; } // Another VL variant
+                        12 => { let _ = iter.get_vl()?; } // Another VL variant
+                        13 => { let _ = iter.get_vl()?; } // Another VL variant
+                        14 => { let _ = iter.get_object()?; } // STObject
+                        15 => {
+                            // STArray - skip by reading field IDs until we find array end
+                            // Array end marker is type 15, field 1 -> encoded as 0xF1 (if both < 16)
+                            // or as 0x01 0x0F (field first since type=15 >= 16)
+                            // Actually: type=15 >= 16, field=1 < 16
+                            // Encoding: field byte first, then type byte -> 0x01 0x0F
+                            loop {
+                                let pos = iter.position();
+                                let arr_field_id = iter.get_field_id()?;
+                                // Array end marker is type 15, field 1
+                                if arr_field_id.0 == 15 && arr_field_id.1 == 1 {
+                                    break;
+                                }
+                                // Object start marker is type 14, field 1
+                                if arr_field_id.0 == 14 && arr_field_id.1 == 1 {
+                                    // Object content - skip fields until we hit object end
+                                    // Object end is also type 14, field 1
+                                    // We need to track nesting depth
+                                    let mut depth = 1;
+                                    while depth > 0 {
+                                        let inner_id = iter.get_field_id()?;
+                                        if inner_id.0 == 14 && inner_id.1 == 1 {
+                                            depth -= 1; // Object end
+                                        } else if inner_id.0 == 14 {
+                                            // Another object start at different field
+                                            depth += 1;
+                                            // Skip inner object content
+                                            while depth > 1 {
+                                                let nested_id = iter.get_field_id()?;
+                                                if nested_id.0 == 14 && nested_id.1 == 1 {
+                                                    depth -= 1;
+                                                } else if nested_id.0 == 14 {
+                                                    depth += 1;
+                                                } else {
+                                                    // Skip value based on type
+                                                    match nested_id.0 {
+                                                        1 => { let _ = iter.get16()?; }
+                                                        2 => { let _ = iter.get32()?; }
+                                                        3 => { let _ = iter.get64()?; }
+                                                        4 => { let _ = iter.get128()?; }
+                                                        5 => { let _ = iter.get256()?; }
+                                                        6 => { let _ = iter.get_amount()?; }
+                                                        7 | 9..=13 | 18..=20 => { let _ = iter.get_vl()?; }
+                                                        8 => { let _ = iter.get_account()?; }
+                                                        16 => { let _ = iter.get8()?; }
+                                                        17 => { let _ = iter.get160()?; }
+                                                        _ => {
+                                                            return Err(anyhow::anyhow!("Unknown type {} in nested object", nested_id.0));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            // Regular field - skip value based on type
+                                            match inner_id.0 {
+                                                1 => { let _ = iter.get16()?; }
+                                                2 => { let _ = iter.get32()?; }
+                                                3 => { let _ = iter.get64()?; }
+                                                4 => { let _ = iter.get128()?; }
+                                                5 => { let _ = iter.get256()?; }
+                                                6 => { let _ = iter.get_amount()?; }
+                                                7 | 9..=13 | 18..=20 => { let _ = iter.get_vl()?; }
+                                                8 => { let _ = iter.get_account()?; }
+                                                16 => { let _ = iter.get8()?; }
+                                                17 => { let _ = iter.get160()?; }
+                                                _ => {
+                                                    return Err(anyhow::anyhow!("Unknown type {} in object", inner_id.0));
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Regular field in array (shouldn't happen often)
+                                    // Skip value based on type
+                                    match arr_field_id.0 {
+                                        1 => { let _ = iter.get16()?; }
+                                        2 => { let _ = iter.get32()?; }
+                                        3 => { let _ = iter.get64()?; }
+                                        4 => { let _ = iter.get128()?; }
+                                        5 => { let _ = iter.get256()?; }
+                                        6 => { let _ = iter.get_amount()?; }
+                                        7 | 9..=13 | 18..=20 => { let _ = iter.get_vl()?; }
+                                        8 => { let _ = iter.get_account()?; }
+                                        16 => { let _ = iter.get8()?; }
+                                        17 => { let _ = iter.get160()?; }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
                         16 => { let _ = iter.get8()?; } // UInt8
                         17 => { let _ = iter.get160()?; } // Hash160
+                        18 => { let _ = iter.get_vl()?; } // PathSet (VL-encoded)
+                        19 => { let _ = iter.get_vl()?; } // Vector256 (VL-encoded)
+                        20 => { let _ = iter.get_vl()?; } // Another VL variant
                         _ => {
                             return Err(anyhow::anyhow!(
                                 "Unknown field type {} for field {}, cannot skip",

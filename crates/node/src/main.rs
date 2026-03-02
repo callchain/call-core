@@ -250,6 +250,64 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Parse an AssetAmount from JSON value
+fn parse_asset_amount(value: &serde_json::Value) -> anyhow::Result<crypto::transaction_signer::AssetAmount> {
+    use crypto::transaction_signer::AssetAmount;
+
+    // Helper to parse account address (hex or base58)
+    fn parse_account_addr(addr_str: &str) -> anyhow::Result<primitives::AccountID> {
+        // Try hex first (40 hex chars = 20 bytes)
+        if addr_str.len() == 40 {
+            if let Ok(bytes) = hex::decode(addr_str) {
+                if bytes.len() == 20 {
+                    return Ok(primitives::AccountID::new(bytes.try_into().unwrap()));
+                }
+            }
+        }
+        // Try base58 (addresses starting with 'c')
+        if addr_str.starts_with('c') {
+            match crypto::base58::decode(addr_str) {
+                Ok(decoded) => {
+                    // Format: version (1 byte) + account_id (20 bytes) + checksum (4 bytes)
+                    if decoded.len() == 25 {
+                        let mut bytes = [0u8; 20];
+                        bytes.copy_from_slice(&decoded[1..21]);
+                        return Ok(primitives::AccountID::new(bytes));
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        Err(anyhow::anyhow!("Invalid account address format: {}", addr_str))
+    }
+
+    if let Some(amount_str) = value.as_str() {
+        // Native amount (string of drops)
+        let amount: u64 = amount_str.parse()
+            .map_err(|_| anyhow::anyhow!("Invalid native amount"))?;
+        Ok(AssetAmount::native(amount))
+    } else if let Some(obj) = value.as_object() {
+        // Issued currency amount
+        let currency_str = obj.get("currency")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing currency field"))?;
+
+        let issuer_str = obj.get("issuer")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing issuer field"))?;
+        let issuer = parse_account_addr(issuer_str)?;
+
+        let value_str = obj.get("value")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing value field"))?;
+        let value: i64 = value_str.parse()?;
+
+        Ok(AssetAmount::issued(value, currency_str, issuer))
+    } else {
+        Err(anyhow::anyhow!("Invalid amount format"))
+    }
+}
+
 fn generate_seed() {
     generate_wallet();
 }
@@ -493,12 +551,38 @@ fn sign_transaction_local(key: &str, tx: &str) -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("Invalid private key"))?
     };
 
+    // Helper function to parse account address (hex or base58)
+    fn parse_account(addr_str: &str) -> anyhow::Result<primitives::AccountID> {
+        // Try hex first (40 hex chars = 20 bytes)
+        if addr_str.len() == 40 {
+            if let Ok(bytes) = hex::decode(addr_str) {
+                if bytes.len() == 20 {
+                    return Ok(primitives::AccountID::new(bytes.try_into().unwrap()));
+                }
+            }
+        }
+        // Try base58 (addresses starting with 'c')
+        if addr_str.starts_with('c') {
+            match crypto::base58::decode(addr_str) {
+                Ok(decoded) => {
+                    // Format: version (1 byte) + account_id (20 bytes) + checksum (4 bytes)
+                    if decoded.len() == 25 {
+                        let mut bytes = [0u8; 20];
+                        bytes.copy_from_slice(&decoded[1..21]);
+                        return Ok(primitives::AccountID::new(bytes));
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        Err(anyhow::anyhow!("Invalid account address format: {}", addr_str))
+    }
+
     // Extract transaction fields from JSON
-    let account_hex = tx_json.get("Account")
+    let account_str = tx_json.get("Account")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing Account field"))?;
-    let account_bytes = hex::decode(account_hex)?;
-    let account = primitives::AccountID::new(account_bytes.try_into().unwrap());
+    let account = parse_account(account_str)?;
 
     let sequence = tx_json.get("Sequence")
         .and_then(|v| v.as_u64())
@@ -511,11 +595,10 @@ fn sign_transaction_local(key: &str, tx: &str) -> anyhow::Result<()> {
     // Create and sign transaction based on type
     let tx_blob = match tx_type {
         "Payment" => {
-            let dest_hex = tx_json.get("Destination")
+            let dest_str = tx_json.get("Destination")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing Destination field"))?;
-            let dest_bytes = hex::decode(dest_hex)?;
-            let destination = primitives::AccountID::new(dest_bytes.try_into().unwrap());
+            let destination = parse_account(dest_str)?;
 
             let amount_str = tx_json.get("Amount")
                 .and_then(|v| v.as_str())
@@ -527,6 +610,105 @@ fn sign_transaction_local(key: &str, tx: &str) -> anyhow::Result<()> {
         }
         "AccountSet" => {
             TransactionSigner::sign_account_set(account, sequence, &private_key)
+                .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?
+        }
+        "TrustSet" => {
+            use crypto::transaction_signer::{SignableTransaction, TransactionType, AssetAmount};
+
+            let limit_amount = tx_json.get("LimitAmount")
+                .ok_or_else(|| anyhow::anyhow!("Missing LimitAmount field"))?;
+
+            let currency_str = limit_amount.get("currency")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing currency field"))?;
+
+            let issuer_str = limit_amount.get("issuer")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing issuer field"))?;
+            let issuer = parse_account(issuer_str)?;
+
+            let value_str = limit_amount.get("value")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing value field"))?;
+            let value: i64 = value_str.parse()?;
+
+            // Convert currency string to 20-byte array
+            let mut currency = [0u8; 20];
+            if currency_str.len() == 3 {
+                currency[12] = currency_str.as_bytes()[0];
+                currency[13] = currency_str.as_bytes()[1];
+                currency[14] = currency_str.as_bytes()[2];
+            } else if currency_str.len() == 40 {
+                let hex_bytes = hex::decode(currency_str)?;
+                currency.copy_from_slice(&hex_bytes);
+            }
+
+            let tx = SignableTransaction::new_trust_set(account, issuer, currency, value, sequence);
+            TransactionSigner::sign_transaction(&tx, &private_key)
+                .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?
+        }
+        "OfferCreate" => {
+            use crypto::transaction_signer::{SignableTransaction, TransactionType, AssetAmount};
+
+            let taker_pays = parse_asset_amount(tx_json.get("TakerPays")
+                .ok_or_else(|| anyhow::anyhow!("Missing TakerPays field"))?)?;
+            let taker_gets = parse_asset_amount(tx_json.get("TakerGets")
+                .ok_or_else(|| anyhow::anyhow!("Missing TakerGets field"))?)?;
+
+            let tx = SignableTransaction::new_offer_create(account, taker_pays, taker_gets, sequence);
+            TransactionSigner::sign_transaction(&tx, &private_key)
+                .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?
+        }
+        "OfferCancel" => {
+            use crypto::transaction_signer::{SignableTransaction, TransactionType};
+
+            let offer_seq = tx_json.get("OfferSequence")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| anyhow::anyhow!("Missing OfferSequence field"))? as u32;
+
+            let tx = SignableTransaction::new_offer_cancel(account, offer_seq, sequence);
+            TransactionSigner::sign_transaction(&tx, &private_key)
+                .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?
+        }
+        "SetRegularKey" => {
+            use crypto::transaction_signer::{SignableTransaction, TransactionType};
+
+            let key_str = tx_json.get("RegularKey")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing RegularKey field"))?;
+            let regular_key = parse_account(key_str)?;
+
+            let tx = SignableTransaction::new_set_regular_key(account, regular_key, sequence);
+            TransactionSigner::sign_transaction(&tx, &private_key)
+                .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?
+        }
+        "SignerListSet" => {
+            use crypto::transaction_signer::{SignableTransaction, SignerEntry, TransactionType};
+
+            let quorum = tx_json.get("SignerQuorum")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| anyhow::anyhow!("Missing SignerQuorum field"))? as u32;
+
+            let signers_json = tx_json.get("Signers")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| anyhow::anyhow!("Missing Signers field"))?;
+
+            let mut signers = Vec::new();
+            for signer_json in signers_json {
+                let signer_account_str = signer_json.get("Account")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing Signer Account field"))?;
+                let signer_account = parse_account(signer_account_str)?;
+
+                let weight = signer_json.get("SignerWeight")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| anyhow::anyhow!("Missing SignerWeight field"))? as u16;
+
+                signers.push(SignerEntry { account: signer_account, weight });
+            }
+
+            let tx = SignableTransaction::new_signer_list_set(account, quorum, signers, sequence);
+            TransactionSigner::sign_transaction(&tx, &private_key)
                 .map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?
         }
         _ => {

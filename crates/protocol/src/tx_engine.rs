@@ -918,90 +918,108 @@ impl TransactionEngine {
     /// Get the hash of transaction data that should be signed
     fn get_transaction_signing_hash(&self, tx: &Transaction) -> UInt256 {
         use crypto::sha512_half;
+        use crypto::HashPrefix;
+        use serialization::{Serializer, STObject, STValue};
+        use serialization::types::sf;
 
-        // Build signing data by combining critical transaction fields
-        let mut data = Vec::new();
+        // Build signing data using the same format as transaction_signer.rs:
+        // HashPrefix::TxSign + serialized STObject (without signature fields)
 
-        // Add transaction type (as bytes)
-        data.extend_from_slice(&(tx.tx_type as u16).to_be_bytes());
+        // Build STObject from transaction
+        let mut obj = STObject::new();
 
-        // Add account
-        data.extend_from_slice(tx.account.as_bytes());
+        // TransactionType
+        obj.insert(sf::TRANSACTION_TYPE, STValue::UInt16(tx.tx_type as u16));
 
-        // Add sequence
-        data.extend_from_slice(&tx.sequence.to_be_bytes());
+        // Account
+        obj.insert(sf::ACCOUNT, STValue::Account(tx.account));
 
-        // Add fee
-        data.extend_from_slice(&tx.fee.to_be_bytes());
+        // Sequence
+        obj.insert(sf::SEQUENCE, STValue::UInt32(tx.sequence));
 
-        // Add transaction-specific fields based on type
+        // Fee
+        obj.insert(sf::FEE, STValue::Amount(serialization::Amount::call(tx.fee)));
+
+        // Transaction-specific fields
         match tx.tx_type {
             TxType::Payment => {
                 if let Some(dest) = &tx.destination {
-                    data.extend_from_slice(dest.as_bytes());
+                    obj.insert(sf::DESTINATION, STValue::Account(*dest));
                 }
                 if let Some(amt) = &tx.amount {
-                    // Add amount fields directly
-                    data.extend_from_slice(&amt.mantissa.to_be_bytes());
-                    data.extend_from_slice(&amt.exponent.to_be_bytes());
-                    data.extend_from_slice(amt.currency.as_bytes());
+                    obj.insert(sf::AMOUNT, STValue::Amount(*amt));
+                }
+                if let Some(tag) = tx.destination_tag {
+                    obj.insert(sf::DESTINATION_TAG, STValue::UInt32(tag));
                 }
             }
             TxType::TrustSet => {
-                if let Some(issuer) = &tx.issuer {
-                    data.extend_from_slice(issuer.as_bytes());
-                }
                 if let Some(limit) = &tx.limit_amount {
-                    data.extend_from_slice(&limit.mantissa.to_be_bytes());
-                    data.extend_from_slice(&limit.exponent.to_be_bytes());
-                    data.extend_from_slice(limit.currency.as_bytes());
+                    obj.insert(sf::LIMIT_AMOUNT, STValue::Amount(*limit));
                 }
             }
             TxType::OfferCreate => {
                 if let Some(pays) = &tx.taker_pays {
-                    data.extend_from_slice(&pays.mantissa.to_be_bytes());
-                    data.extend_from_slice(&pays.exponent.to_be_bytes());
-                    data.extend_from_slice(pays.currency.as_bytes());
+                    obj.insert(sf::TAKER_PAYS, STValue::Amount(*pays));
                 }
                 if let Some(gets) = &tx.taker_gets {
-                    data.extend_from_slice(&gets.mantissa.to_be_bytes());
-                    data.extend_from_slice(&gets.exponent.to_be_bytes());
-                    data.extend_from_slice(gets.currency.as_bytes());
+                    obj.insert(sf::TAKER_GETS, STValue::Amount(*gets));
                 }
-                data.extend_from_slice(&tx.offer_sequence.to_be_bytes());
             }
             TxType::OfferCancel => {
-                data.extend_from_slice(&tx.offer_sequence.to_be_bytes());
+                obj.insert(sf::OFFER_SEQUENCE, STValue::UInt32(tx.offer_sequence));
             }
             TxType::AccountSet => {
                 if let Some(domain) = &tx.domain {
-                    data.extend_from_slice(domain.as_slice());
+                    obj.insert(sf::DOMAIN, STValue::VL(domain.clone()));
                 }
-                if let Some(set_flag) = tx.set_flag {
-                    data.extend_from_slice(&set_flag.to_be_bytes());
+                if let Some(flag) = tx.set_flag {
+                    obj.insert(sf::SET_FLAG, STValue::UInt32(flag));
                 }
-                if let Some(clear_flag) = tx.clear_flag {
-                    data.extend_from_slice(&clear_flag.to_be_bytes());
+                if let Some(flag) = tx.clear_flag {
+                    obj.insert(sf::CLEAR_FLAG, STValue::UInt32(flag));
                 }
             }
             TxType::SetRegularKey => {
                 if let Some(key) = &tx.regular_key {
-                    data.extend_from_slice(key.as_bytes());
+                    obj.insert(sf::REGULAR_KEY, STValue::Account(*key));
                 }
             }
             TxType::SignerListSet => {
-                data.extend_from_slice(&tx.signer_quorum.to_be_bytes());
+                obj.insert(sf::SIGNER_QUORUM, STValue::UInt32(tx.signer_quorum));
+                if !tx.signers.is_empty() {
+                    let signer_values: Vec<STValue> = tx.signers.iter().map(|s| {
+                        let mut signer_obj = STObject::new();
+                        signer_obj.insert(sf::ACCOUNT, STValue::Account(s.account));
+                        signer_obj.insert(sf::SIGNER_WEIGHT, STValue::UInt16(s.weight as u16));
+                        STValue::Object(signer_obj)
+                    }).collect();
+                    obj.insert(sf::SIGNER_ENTRIES, STValue::Array(signer_values));
+                }
             }
             _ => {}
         }
 
-        // Add signing public key
-        if let Some(pk) = &tx.signing_pub_key {
-            data.extend_from_slice(pk.as_slice());
+        // SigningPubKey (required for signature verification)
+        if let Some(ref pk) = tx.signing_pub_key {
+            obj.insert(sf::SIGNING_PUB_KEY, STValue::VL(pk.clone()));
         }
 
-        // Hash with SHA-512/256 for the final signing message
-        sha512_half(&data)
+        // Serialize the object
+        let mut serializer = Serializer::new();
+        let serialized_tx = match serializer.add_object(&obj) {
+            Ok(_) => serializer.finish(),
+            Err(_) => return UInt256::new([0u8; 32]), // Return zero hash on error
+        };
+
+        // Create signing payload: prefix + serialized tx
+        let prefix = HashPrefix::TxSign.as_bytes();
+        let mut sign_data = Vec::with_capacity(prefix.len() + serialized_tx.len());
+        sign_data.extend_from_slice(prefix);
+        sign_data.extend_from_slice(&serialized_tx);
+
+        // Return hash of signing data
+        sha512_half(&sign_data)
     }
 }
 

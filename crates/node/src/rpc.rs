@@ -382,14 +382,31 @@ impl AppRpcHandler {
 
 /// Helper to parse account from string
 fn parse_account(account_str: &str) -> Result<AccountID, JsonRpcError> {
-    // Try hex decode first
-    let account_bytes = hex::decode(account_str).map_err(|_| {
-        JsonRpcError::new(35, "Account malformed.")
-    })?;
-    if account_bytes.len() != 20 {
-        return Err(JsonRpcError::new(35, "Account malformed."));
+    // Try hex decode first (40 hex chars = 20 bytes)
+    if account_str.len() == 40 {
+        if let Ok(account_bytes) = hex::decode(account_str) {
+            if account_bytes.len() == 20 {
+                return Ok(AccountID::new(account_bytes.try_into().unwrap()));
+            }
+        }
     }
-    Ok(AccountID::new(account_bytes.try_into().unwrap()))
+
+    // Try base58 decode (addresses starting with 'c')
+    if account_str.starts_with('c') {
+        match crypto::base58::decode(account_str) {
+            Ok(decoded) => {
+                // Format: version (1 byte) + account_id (20 bytes) + checksum (4 bytes)
+                if decoded.len() == 25 {
+                    let mut bytes = [0u8; 20];
+                    bytes.copy_from_slice(&decoded[1..21]);
+                    return Ok(AccountID::new(bytes));
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    Err(JsonRpcError::new(35, "Account malformed."))
 }
 
 /// Helper to parse UInt256 from hex string

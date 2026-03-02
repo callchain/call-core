@@ -2002,8 +2002,10 @@ impl LedgerState {
         }
 
         // Fall back to raw format
+        // Account is stored as raw 20 bytes (not VL-encoded)
         iter.set_position(0);
-        let _ = iter.get_account().ok()?;
+        let stored_account_160 = iter.get160().ok()?;
+        let _stored_account = AccountID::new(*stored_account_160.as_bytes());
         let balance = iter.get_amount().ok()?;
         let sequence = iter.get32().ok()?;
         let owner_count = iter.get32().ok()?;

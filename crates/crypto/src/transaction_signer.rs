@@ -5,6 +5,8 @@
 
 use crate::keys::PrivateKey;
 use primitives::AccountID;
+use serialization::{Amount, Serializer, STObject, STValue};
+use serialization::types::sf;
 
 /// Transaction type identifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,9 +37,10 @@ pub struct SignableTransaction {
     pub sequence: u32,
     pub fee: u64,
     pub network_id: Option<u32>,
+    pub flags: Option<u32>,
     // Payment fields
     pub destination: Option<AccountID>,
-    pub amount: Option<u64>, // Amount in drops for native payments
+    pub amount: Option<AssetAmount>,
     pub destination_tag: Option<u32>,
     // TrustSet fields
     pub limit_amount: Option<AssetAmount>,
@@ -74,9 +77,49 @@ impl AssetAmount {
         }
     }
 
+    /// Create an issued currency amount
+    pub fn issued(value: i64, currency_code: &str, issuer: AccountID) -> Self {
+        let mut currency = [0u8; 20];
+        if currency_code.len() == 3 {
+            // Standard currency code
+            currency[12] = currency_code.as_bytes()[0];
+            currency[13] = currency_code.as_bytes()[1];
+            currency[14] = currency_code.as_bytes()[2];
+        } else if currency_code.len() == 40 {
+            // Hex currency code
+            if let Ok(hex_bytes) = hex::decode(currency_code) {
+                currency.copy_from_slice(&hex_bytes);
+            }
+        }
+        Self {
+            value,
+            currency,
+            issuer,
+        }
+    }
+
     /// Check if this is a native amount
     pub fn is_native(&self) -> bool {
         self.currency == [0u8; 20]
+    }
+
+    /// Convert to serialization Amount
+    pub fn to_amount(&self) -> Amount {
+        if self.is_native() {
+            Amount::call(self.value as u64)
+        } else {
+            let currency = primitives::Currency::new(self.currency);
+            // Create issued amount directly without validation
+            // to ensure currency and issuer are preserved
+            Amount {
+                mantissa: self.value,
+                exponent: Amount::CALL_EXPONENT,
+                currency,
+                issuer: self.issuer,
+                is_native: false,
+                is_negative: self.value < 0,
+            }
+        }
     }
 }
 
@@ -101,8 +144,9 @@ impl SignableTransaction {
             sequence,
             fee: 10,
             network_id: None,
+            flags: None,
             destination: Some(destination),
-            amount: Some(amount_drops),
+            amount: Some(AssetAmount::native(amount_drops)),
             destination_tag: None,
             limit_amount: None,
             taker_pays: None,
@@ -125,6 +169,7 @@ impl SignableTransaction {
             sequence,
             fee: 10,
             network_id: None,
+            flags: None,
             destination: None,
             amount: None,
             destination_tag: None,
@@ -161,6 +206,7 @@ impl SignableTransaction {
             sequence,
             fee: 10,
             network_id: None,
+            flags: None,
             destination: None,
             amount: None,
             destination_tag: None,
@@ -194,6 +240,7 @@ impl SignableTransaction {
             sequence,
             fee: 10,
             network_id: None,
+            flags: None,
             destination: None,
             amount: None,
             destination_tag: None,
@@ -218,6 +265,7 @@ impl SignableTransaction {
             sequence,
             fee: 10,
             network_id: None,
+            flags: None,
             destination: None,
             amount: None,
             destination_tag: None,
@@ -246,6 +294,7 @@ impl SignableTransaction {
             sequence,
             fee: 10,
             network_id: None,
+            flags: None,
             destination: None,
             amount: None,
             destination_tag: None,
@@ -275,6 +324,7 @@ impl SignableTransaction {
             sequence,
             fee: 10,
             network_id: None,
+            flags: None,
             destination: None,
             amount: None,
             destination_tag: None,
@@ -291,65 +341,108 @@ impl SignableTransaction {
         }
     }
 
-    /// Serialize transaction to bytes for signing
-    /// This is a simplified serialization - proper implementation would use STObject
-    pub fn serialize_for_signing(&self) -> Vec<u8> {
-        // Simple binary serialization for demonstration
-        // In production, use proper serialization::Serializer
-        let mut result = Vec::new();
+    /// Build the STObject representation of this transaction
+    /// This creates the transaction data without signature fields
+    pub fn to_stobject(&self, include_signature_fields: bool, public_key: Option<&[u8]>, signature: Option<&[u8]>) -> STObject {
+        let mut obj = STObject::new();
 
-        // Transaction type (2 bytes, big-endian)
-        result.extend_from_slice(&self.tx_type.as_u16().to_be_bytes());
+        // TransactionType (always first for canonical ordering)
+        obj.insert(sf::TRANSACTION_TYPE, STValue::UInt16(self.tx_type.as_u16()));
 
-        // Account (20 bytes)
-        result.extend_from_slice(self.account.as_bytes());
+        // Account
+        obj.insert(sf::ACCOUNT, STValue::Account(self.account));
 
-        // Sequence (4 bytes, big-endian)
-        result.extend_from_slice(&self.sequence.to_be_bytes());
+        // Sequence
+        obj.insert(sf::SEQUENCE, STValue::UInt32(self.sequence));
 
-        // Fee (8 bytes, big-endian)
-        result.extend_from_slice(&self.fee.to_be_bytes());
+        // Fee (as Amount)
+        obj.insert(sf::FEE, STValue::Amount(Amount::call(self.fee)));
+
+        // NetworkID (optional)
+        if let Some(network_id) = self.network_id {
+            // Note: sf::NETWORK_ID might not exist, skipping for now
+        }
+
+        // Flags (optional)
+        if let Some(flags) = self.flags {
+            obj.insert(sf::FLAGS, STValue::UInt32(flags));
+        }
 
         // Transaction-specific fields
         match self.tx_type {
             TransactionType::Payment => {
                 if let Some(dest) = self.destination {
-                    result.extend_from_slice(dest.as_bytes());
+                    obj.insert(sf::DESTINATION, STValue::Account(dest));
                 }
-                if let Some(amt) = self.amount {
-                    result.extend_from_slice(&amt.to_be_bytes());
+                if let Some(ref amt) = self.amount {
+                    obj.insert(sf::AMOUNT, STValue::Amount(amt.to_amount()));
+                }
+                if let Some(tag) = self.destination_tag {
+                    obj.insert(sf::DESTINATION_TAG, STValue::UInt32(tag));
                 }
             }
             TransactionType::AccountSet => {
                 if let Some(ref domain) = self.domain {
-                    result.extend_from_slice(domain);
+                    obj.insert(sf::DOMAIN, STValue::VL(domain.clone()));
+                }
+                if let Some(flag) = self.set_flag {
+                    obj.insert(sf::SET_FLAG, STValue::UInt32(flag));
+                }
+                if let Some(flag) = self.clear_flag {
+                    obj.insert(sf::CLEAR_FLAG, STValue::UInt32(flag));
                 }
             }
             TransactionType::TrustSet => {
-                // Serialize limit amount
+                if let Some(ref limit) = self.limit_amount {
+                    obj.insert(sf::LIMIT_AMOUNT, STValue::Amount(limit.to_amount()));
+                }
             }
             TransactionType::OfferCreate => {
-                // Serialize offer amounts
+                if let Some(ref pays) = self.taker_pays {
+                    obj.insert(sf::TAKER_PAYS, STValue::Amount(pays.to_amount()));
+                }
+                if let Some(ref gets) = self.taker_gets {
+                    obj.insert(sf::TAKER_GETS, STValue::Amount(gets.to_amount()));
+                }
             }
             TransactionType::OfferCancel => {
                 if let Some(seq) = self.offer_sequence {
-                    result.extend_from_slice(&seq.to_be_bytes());
+                    obj.insert(sf::OFFER_SEQUENCE, STValue::UInt32(seq));
                 }
             }
             TransactionType::SetRegularKey => {
                 if let Some(key) = self.regular_key {
-                    result.extend_from_slice(key.as_bytes());
+                    obj.insert(sf::REGULAR_KEY, STValue::Account(key));
                 }
             }
             TransactionType::SignerListSet => {
                 if let Some(quorum) = self.signer_quorum {
-                    result.extend_from_slice(&quorum.to_be_bytes());
+                    obj.insert(sf::SIGNER_QUORUM, STValue::UInt32(quorum));
+                }
+                if !self.signers.is_empty() {
+                    let signer_values: Vec<STValue> = self.signers.iter().map(|s| {
+                        let mut signer_obj = STObject::new();
+                        signer_obj.insert(sf::ACCOUNT, STValue::Account(s.account));
+                        signer_obj.insert(sf::SIGNER_WEIGHT, STValue::UInt16(s.weight));
+                        STValue::Object(signer_obj)
+                    }).collect();
+                    obj.insert(sf::SIGNER_ENTRIES, STValue::Array(signer_values));
                 }
             }
             _ => {}
         }
 
-        result
+        // Add signature fields if requested
+        if include_signature_fields {
+            if let Some(pubkey) = public_key {
+                obj.insert(sf::SIGNING_PUB_KEY, STValue::VL(pubkey.to_vec()));
+            }
+            if let Some(sig) = signature {
+                obj.insert(sf::TXN_SIGNATURE, STValue::VL(sig.to_vec()));
+            }
+        }
+
+        obj
     }
 }
 
@@ -363,77 +456,39 @@ impl TransactionSigner {
         tx: &SignableTransaction,
         private_key: &PrivateKey,
     ) -> Result<String, SignError> {
-        // Serialize transaction
-        let tx_bytes = tx.serialize_for_signing();
-
         // Get the public key for SigningPubKey field
         let public_key = private_key.to_public_key();
+        let pubkey_bytes = public_key.as_bytes();
 
-        // Create signing payload (prefix + tx bytes)
+        // Build the STObject for signing (without signature fields)
+        let obj_for_signing = tx.to_stobject(false, None, None);
+
+        // Serialize the object
+        let mut serializer = Serializer::new();
+        serializer.add_object(&obj_for_signing)
+            .map_err(|_| SignError::SerializationFailed)?;
+        let serialized_tx = serializer.finish();
+
+        // Create signing payload (prefix + serialized tx)
         let prefix = crate::hash::HashPrefix::TxSign.as_bytes();
-        let mut sign_data = Vec::with_capacity(prefix.len() + tx_bytes.len());
+        let mut sign_data = Vec::with_capacity(prefix.len() + serialized_tx.len());
         sign_data.extend_from_slice(prefix);
-        sign_data.extend_from_slice(&tx_bytes);
+        sign_data.extend_from_slice(&serialized_tx);
 
         // Sign the transaction hash
         let signature = private_key.sign(&sign_data);
+        let sig_bytes = signature.as_bytes();
 
-        // Build the signed transaction blob
-        // This includes all fields plus SigningPubKey and TxnSignature
-        let signed_blob = Self::build_signed_blob(tx, &public_key.as_bytes(), signature.as_bytes())?;
+        // Build the final STObject with signature fields
+        let signed_obj = tx.to_stobject(true, Some(&pubkey_bytes), Some(sig_bytes));
+
+        // Serialize the final object
+        let mut final_serializer = Serializer::new();
+        final_serializer.add_object(&signed_obj)
+            .map_err(|_| SignError::SerializationFailed)?;
+        let signed_blob = final_serializer.finish();
 
         Ok(hex::encode(&signed_blob))
-    }
-
-    /// Build the final signed transaction blob
-    fn build_signed_blob(
-        tx: &SignableTransaction,
-        public_key: &[u8],
-        signature: &[u8],
-    ) -> Result<Vec<u8>, SignError> {
-        // Simplified blob construction
-        // In production, use proper STObject serialization
-
-        let mut blob = Vec::new();
-
-        // Transaction type
-        blob.extend_from_slice(&tx.tx_type.as_u16().to_be_bytes());
-
-        // Flags (optional, omitted for simplicity)
-
-        // Sequence
-        blob.extend_from_slice(&tx.sequence.to_be_bytes());
-
-        // Fee (as Amount)
-        // For simplicity, using 8-byte representation
-        blob.extend_from_slice(&tx.fee.to_be_bytes());
-
-        // SigningPubKey (variable length, length-prefixed)
-        blob.push(public_key.len() as u8);
-        blob.extend_from_slice(public_key);
-
-        // Account
-        blob.extend_from_slice(tx.account.as_bytes());
-
-        // Transaction-specific fields
-        match tx.tx_type {
-            TransactionType::Payment => {
-                if let Some(dest) = tx.destination {
-                    blob.extend_from_slice(dest.as_bytes());
-                }
-                if let Some(amt) = tx.amount {
-                    // Amount field (8 bytes for native)
-                    blob.extend_from_slice(&amt.to_be_bytes());
-                }
-            }
-            _ => {}
-        }
-
-        // TxnSignature (variable length, length-prefixed)
-        blob.push(signature.len() as u8);
-        blob.extend_from_slice(signature);
-
-        Ok(blob)
     }
 
     /// Create and sign a payment transaction (convenience method)

@@ -506,7 +506,7 @@ impl<'a> SerialIter<'a> {
             type_bits
         };
 
-        let field_num = if field_bits < 16 {
+        let field_num = if field_bits > 0 && field_bits < 16 {
             field_bits
         } else {
             self.get8()? as u16

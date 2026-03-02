@@ -311,8 +311,10 @@ impl GenesisConfig {
 
         // Serialize account to bytes using raw format (consistent with LedgerState)
         use serialization::Serializer;
+        use primitives::UInt160;
         let mut serializer = Serializer::new();
-        serializer.add_account(account_root.account);
+        // Account is written as raw 20 bytes (not VL-encoded)
+        serializer.add160(UInt160::new(*account_root.account.as_bytes()));
         serializer.add_amount(account_root.balance);
         serializer.add32(account_root.sequence);
         serializer.add32(account_root.owner_count);

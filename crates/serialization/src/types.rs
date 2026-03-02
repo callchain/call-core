@@ -231,6 +231,7 @@ pub mod sf {
         TRANSACTIONS = (SerializedTypeID::Vector256, 4, true, true),
         AMENDMENTS = (SerializedTypeID::Vector256, 5, true, true),
         CURRENCY = (SerializedTypeID::VL, 1, true, true),
+        OFFER_SEQUENCE = (SerializedTypeID::UInt32, 25, true, true),
         SIGNER_LIST_ID = (SerializedTypeID::UInt32, 41, true, true),
         SET_FLAG = (SerializedTypeID::UInt32, 33, true, true),
         CLEAR_FLAG = (SerializedTypeID::UInt32, 34, true, true),

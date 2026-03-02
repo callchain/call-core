@@ -19,27 +19,27 @@
     }
   },
   "alloc": {
-    "cw6htsw3GuePRosi6viQfUrCiMcqn5L2R2": {
+    "cagpMvZf6Z8GrnAPZdQgXrCqBvCFmQYfJi": {
       "balance": "100000000000",
       "sequence": 1,
       "flags": 0
     },
-    "cEhww3EorJ51Qt5q8GPphRq6e6v6c8SrPN": {
+    "cGMbLyeUsUpjTtMFcCWZDVA4hdMXpjvPi3": {
       "balance": "50000000000",
       "sequence": 1,
       "flags": 0
     },
-    "cKWNc1vH2xvRrY1q6DHPoAhn1q3GMHx9b": {
+    "cadFKa9yk1Fv4PBj2DeZfYW48APXj4L8g": {
       "balance": "25000000000",
       "sequence": 1,
       "flags": 0
     },
-    "cHjJ9P8sBr7qMkbZzZnk7dYX5r5d7XNP3": {
+    "cLxud1QujAfeYszuY6DBwBhGE4fQ3GhKS5": {
       "balance": "10000000000",
       "sequence": 1,
       "flags": 0
     },
-    "cL8p1aN3vQ2wR9tY5kM7jH4bX6cV2zQ8": {
+    "cGUQS4suRWMibEGCz46xxMVw45yB3h5Pio": {
       "balance": "5000000000",
       "sequence": 1,
       "flags": 0
@@ -50,20 +50,7 @@
       "nodeId": "NodeID(0000000000000000000000000000000000000000000000000000000000000000)",
       "publicKey": "0330E7FC9D56BB25D6893BA3F317AE5BCF33B3291BD63DB32654A313222F7FD020",
       "domain": "validator1.callchain.local"
-    },
-    {
-      "nodeId": "NodeID(1111111111111111111111111111111111111111111111111111111111111111)",
-      "publicKey": "02C1FA69EBEDD153A6D07E98FBAB5E6CE9DE67C200E3A29858495A42D356B90972",
-      "domain": "validator2.callchain.local"
-    },
-    {
-      "nodeId": "NodeID(2222222222222222222222222222222222222222222222222222222222222222)",
-      "publicKey": "03D2GB7FCFEE264B164F8B98C5B7BF1E0AF2F78D310F4A698695B53E467C10A83",
-      "domain": "validator3.callchain.local"
     }
   ],
-  "coinbase": "cw6htsw3GuePRosi6viQfUrCiMcqn5L2R2",
-  "difficulty": "1",
-  "gasLimit": "10000000",
-  "timestamp": "0x0"
+  "coinbase": "cagpMvZf6Z8GrnAPZdQgXrCqBvCFmQYfJi"
 }
