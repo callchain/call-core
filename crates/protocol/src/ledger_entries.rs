@@ -2591,9 +2591,11 @@ impl LedgerState {
 
 impl Clone for LedgerState {
     fn clone(&self) -> Self {
-        // SHAMap doesn't implement Clone, so we create a new empty one
-        // In a real implementation, this would deep copy the tree
-        Self::new()
+        // Deep copy the SHAMap and nickname index
+        Self {
+            state_map: self.state_map.clone(),
+            nickname_index: self.nickname_index.clone(),
+        }
     }
 }
 

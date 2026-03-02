@@ -83,11 +83,24 @@ Tracking stub code, placeholder implementations, and incomplete features in call
 - [ ] `set_signer_list()` - empty body
 - [ ] `set_nickname_entry()` - empty body
 
-### 5. Ledger State Cloning [MEDIUM]
-**File:** `crates/protocol/src/ledger_entries.rs:2376`
-**Issue:** SHAMap doesn't implement Clone
-- [ ] Implement deep copy for ledger state tree
-- [ ] Fix `Clone` implementation for SHAMap
+### 5. Ledger State Cloning [MEDIUM] ✓
+**File:** `crates/protocol/src/ledger_entries.rs:2592`
+**Status:** ✅ COMPLETED
+
+**Implementation Completed:**
+- [x] Added `#[derive(Clone)]` to `SHAMap` struct
+- [x] Updated `Clone` implementation for `LedgerState` to deep copy:
+  * `state_map: self.state_map.clone()` - deep copy of SHAMap tree
+  * `nickname_index: self.nickname_index.clone()` - copy of HashMap
+- [x] Added test `test_shamap_clone()` to verify:
+  * Clone has same data as original
+  * Clone has same root hash as original
+  * Modifying original doesn't affect clone
+  * Root hashes differ after modification
+
+**Files Modified:**
+- `crates/shamap/src/map.rs`
+- `crates/protocol/src/ledger_entries.rs`
 
 ## Simplified Implementations (Priority 3)
 
@@ -159,14 +172,14 @@ Tracking stub code, placeholder implementations, and incomplete features in call
 | Phase | Items | Completed | Status |
 |-------|-------|-----------|--------|
 | Phase 1 | 3 | 3 | ✅ COMPLETE |
-| Phase 2 | 3 | 1 | In Progress |
+| Phase 2 | 3 | 2 | In Progress |
 | Phase 3 | 3 | 1 | In Progress |
 | Phase 4 | 3 | 0 | Not Started |
 
 **Total Tasks:** 12
-**Completed:** 5
+**Completed:** 6
 **In Progress:** 0
-**Pending:** 7
+**Pending:** 6
 
 ## Completed Tasks
 
@@ -249,3 +262,18 @@ Tracking stub code, placeholder implementations, and incomplete features in call
   - `crates/protocol/src/transactions.rs`
   - `crates/protocol/src/views.rs`
   - `crates/protocol/src/tx_queue.rs`
+
+### Task 5: SHAMap Clone / Ledger State Cloning ✓
+- Added `#[derive(Clone)]` to `SHAMap` struct in `crates/shamap/src/map.rs`
+- Updated `Clone` implementation for `LedgerState` to perform deep copy:
+  * `state_map: self.state_map.clone()` - deep copy of SHAMap tree structure
+  * `nickname_index: self.nickname_index.clone()` - copy of nickname HashMap
+- All component types already derived Clone (SHAMapAbstractNode, SHAMapInnerNode, SHAMapInnerNodeV2, SHAMapTreeNode, SHAMapItem)
+- Added comprehensive test `test_shamap_clone()` verifying:
+  * Clone has identical data to original
+  * Clone has identical root hash to original
+  * Modifying original after clone doesn't affect clone
+  * Root hashes differ after modification (proving independent copies)
+- Files modified:
+  - `crates/shamap/src/map.rs`
+  - `crates/protocol/src/ledger_entries.rs`

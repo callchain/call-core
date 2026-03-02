@@ -11,6 +11,7 @@ pub enum SHAMapType {
     State = 2,
 }
 
+#[derive(Debug, Clone)]
 pub struct SHAMap {
     map_type: SHAMapType,
     root: Option<Box<SHAMapAbstractNode>>,
@@ -400,5 +401,41 @@ mod tests {
         let retrieved = map.get_item(&key);
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().data(), &data[..]);
+    }
+
+    #[test]
+    fn test_shamap_clone() {
+        let mut map = SHAMap::new(SHAMapType::State);
+        let key1 = UInt256::new([0u8; 32]);
+        let data1 = vec![1, 2, 3, 4];
+        let item1 = SHAMapItem::new(key1, data1.clone());
+        map.add_item(key1, item1);
+
+        // Clone the map
+        let cloned = map.clone();
+
+        // Verify original still works
+        assert!(map.get_item(&key1).is_some());
+        assert_eq!(map.get_item(&key1).unwrap().data(), &data1[..]);
+
+        // Verify clone has the data
+        assert!(cloned.get_item(&key1).is_some());
+        assert_eq!(cloned.get_item(&key1).unwrap().data(), &data1[..]);
+
+        // Verify they have the same root hash
+        assert_eq!(map.get_root_hash(), cloned.get_root_hash());
+
+        // Modify original - clone should not be affected
+        let key2 = UInt256::new([1u8; 32]);
+        let data2 = vec![5, 6, 7, 8];
+        let item2 = SHAMapItem::new(key2, data2);
+        map.add_item(key2, item2);
+
+        // Original should have the new item
+        assert!(map.get_item(&key2).is_some());
+        // Clone should NOT have the new item
+        assert!(cloned.get_item(&key2).is_none());
+        // Root hashes should now differ
+        assert_ne!(map.get_root_hash(), cloned.get_root_hash());
     }
 }
