@@ -38,6 +38,7 @@ Call-Core implements the Callchain protocol, a distributed ledger technology des
 ### Operator Guides
 - [Configuration](guides/configuration.md) - Node configuration
 - [Validator Setup](guides/validator-setup.md) - Run a validator
+- [Local Testnet](guides/local-testnet.md) - Deploy a local testnet
 - [CLI Reference](guides/cli-reference.md) - Command-line tools
 
 ## Quick Start
