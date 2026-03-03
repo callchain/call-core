@@ -47,27 +47,76 @@ pub trait LedgerStorage: Send + Sync {
     fn save_genesis_ledger(&self, ledger: &Ledger) -> Result<(), String>;
 }
 
-/// Null implementation of PeerNetwork for testing
+/// Null Object pattern implementation of PeerNetwork for testing
+///
+/// This implementation does nothing and returns empty results. It is used
+/// as a placeholder when testing components that require a PeerNetwork
+/// but where actual network communication is not desired or available.
+///
+/// ## Usage
+/// ```rust
+/// let bootstrap = BootstrapManager::new(config, Box::new(NullPeerNetwork), Box::new(storage));
+/// ```
 pub struct NullPeerNetwork;
 
 impl PeerNetwork for NullPeerNetwork {
-    fn broadcast_get_ledger(&self, _ledger_index: LedgerIndex, _ledger_hash: Option<UInt256>) {}
-    fn send_get_ledger(&self, _peer_id: &AccountID, _ledger_index: LedgerIndex, _ledger_hash: Option<UInt256>) {}
-    fn get_connected_peers(&self) -> Vec<AccountID> { Vec::new() }
-    fn has_peers(&self) -> bool { false }
+    fn broadcast_get_ledger(&self, _ledger_index: LedgerIndex, _ledger_hash: Option<UInt256>) {
+        // No-op: Null implementation for testing
+    }
+    fn send_get_ledger(&self, _peer_id: &AccountID, _ledger_index: LedgerIndex, _ledger_hash: Option<UInt256>) {
+        // No-op: Null implementation for testing
+    }
+    fn get_connected_peers(&self) -> Vec<AccountID> {
+        // Return empty: no peers in null implementation
+        Vec::new()
+    }
+    fn has_peers(&self) -> bool {
+        // Always false: no peers in null implementation
+        false
+    }
 }
 
-/// Null implementation of LedgerStorage for testing
+/// Null Object pattern implementation of LedgerStorage for testing
+///
+/// This implementation does nothing and returns None/Ok results. It is used
+/// as a placeholder when testing components that require a LedgerStorage
+/// but where actual persistent storage is not desired or available.
+///
+/// ## Usage
+/// ```rust
+/// let bootstrap = BootstrapManager::new(config, Box::new(network), Box::new(NullLedgerStorage));
+/// ```
 pub struct NullLedgerStorage;
 
 impl LedgerStorage for NullLedgerStorage {
-    fn load_ledger(&self, _hash: &UInt256) -> Option<Ledger> { None }
-    fn load_ledger_by_index(&self, _index: LedgerIndex) -> Option<Ledger> { None }
-    fn save_ledger(&self, _ledger: &Ledger) -> Result<(), String> { Ok(()) }
-    fn has_ledger(&self, _hash: &UInt256) -> bool { false }
-    fn get_latest_ledger_index(&self) -> Option<LedgerIndex> { None }
-    fn load_genesis_ledger(&self) -> Option<Ledger> { None }
-    fn save_genesis_ledger(&self, _ledger: &Ledger) -> Result<(), String> { Ok(()) }
+    fn load_ledger(&self, _hash: &UInt256) -> Option<Ledger> {
+        // Return None: no storage in null implementation
+        None
+    }
+    fn load_ledger_by_index(&self, _index: LedgerIndex) -> Option<Ledger> {
+        // Return None: no storage in null implementation
+        None
+    }
+    fn save_ledger(&self, _ledger: &Ledger) -> Result<(), String> {
+        // Return Ok: no-op save in null implementation
+        Ok(())
+    }
+    fn has_ledger(&self, _hash: &UInt256) -> bool {
+        // Always false: no ledgers stored in null implementation
+        false
+    }
+    fn get_latest_ledger_index(&self) -> Option<LedgerIndex> {
+        // Return None: no ledgers stored in null implementation
+        None
+    }
+    fn load_genesis_ledger(&self) -> Option<Ledger> {
+        // Return None: no genesis stored in null implementation
+        None
+    }
+    fn save_genesis_ledger(&self, _ledger: &Ledger) -> Result<(), String> {
+        // Return Ok: no-op save in null implementation
+        Ok(())
+    }
 }
 
 /// Bootstrap configuration
@@ -792,13 +841,30 @@ impl GenesisLoader {
                         info!("Requesting genesis ledger from network peers");
                         net.broadcast_get_ledger(1, None); // Genesis is ledger 1
 
-                        // Note: In a real implementation, we'd wait for responses
-                        // For now, fall back to creating from config
-                        warn!("Network fetch not yet implemented, creating from config");
+                        // Wait for network response with timeout
+                        let timeout = Duration::from_secs(5);
+                        let start = Instant::now();
+
+                        while start.elapsed() < timeout {
+                            // Check if storage now has the genesis ledger
+                            // (it would have been saved by the network handler)
+                            if let Some(ref storage) = storage {
+                                if let Some(ledger) = storage.load_genesis_ledger() {
+                                    info!("Genesis ledger loaded from network");
+                                    return Ok(ledger);
+                                }
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+
+                        warn!(
+                            "Network genesis fetch timed out, falling back to local creation"
+                        );
                     }
                 }
 
                 // Fall back to creating from config without storage
+                info!("Creating genesis ledger from configuration");
                 let (genesis_info, _initial_txs) =
                     Self::create_with_accounts(&genesis_config.initial_accounts);
                 let mut ledger = Ledger::new(genesis_info);

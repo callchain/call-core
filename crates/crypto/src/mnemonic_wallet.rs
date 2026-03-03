@@ -167,8 +167,7 @@ impl MnemonicWallet {
         let account_id = generate_account_id(&public_key);
         let address = encode_address(&account_id);
 
-        // Generate Callchain-compatible seed (for backwards compatibility)
-        // This is a simplified representation - actual seed derivation would differ
+        // Generate Callchain-compatible seed from derived private key
         let seed = derive_callchain_seed(&derived_key.private_key_bytes());
 
         Some(DerivedAccount {

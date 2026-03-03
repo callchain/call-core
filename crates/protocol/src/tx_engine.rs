@@ -1173,23 +1173,23 @@ mod tests {
     use primitives::{AccountID, Currency};
     use serialization::Amount;
 
-    /// # Mock Ledger View (Functional)
+    /// # Mock Ledger View (Full)
     ///
-    /// A functional mock implementation of `LedgerView` for testing transaction processing.
+    /// A fully functional mock implementation of `LedgerView` for testing transaction processing.
+    /// Stores all ledger entry types in memory using HashMaps.
     ///
     /// ## Purpose
     /// - Test transaction processing without a full ledger
-    /// - Store and retrieve account state changes during tests
-    /// - Enable stateful testing of transaction effects
+    /// - Store and retrieve all ledger state changes during tests
+    /// - Enable comprehensive testing of transaction effects
     ///
     /// ## Features
-    /// - HashMap-based account storage
-    /// - Supports account creation and balance updates
-    /// - Implements all `LedgerView` trait methods
+    /// - HashMap-based storage for all ledger entry types
+    /// - Supports accounts, trust lines, offers, signers, nicknames, deposit preauths
+    /// - Implements all `LedgerView` trait methods with full functionality
     ///
     /// ## Limitations
     /// - Does NOT persist state to disk
-    /// - Does NOT support other ledger entry types (CallState, Offers, etc.)
     /// - Not suitable for integration tests requiring full ledger behavior
     ///
     /// ## Usage
@@ -1200,24 +1200,26 @@ mod tests {
     /// view.set_account_root(&AccountRoot::new(account).with_balance(1000000));
     /// // Process transactions
     /// ```
-    ///
-    /// ## When to Use
-    /// - Unit testing transaction processing logic
-    /// - Testing balance changes and fee calculations
-    /// - Testing account state transitions
-    ///
-    /// ## When NOT to Use
-    /// - Tests requiring CallState (trust lines)
-    /// - Tests requiring Offer processing
-    /// - Integration tests (use `BasicLedgerView` from `views.rs` instead)
     struct MockLedgerView {
         accounts: std::collections::HashMap<AccountID, AccountRoot>,
+        call_states: std::collections::HashMap<(AccountID, AccountID, Currency), CallState>,
+        offers: std::collections::HashMap<(AccountID, u32), OfferEntry>,
+        signer_lists: std::collections::HashMap<AccountID, crate::ledger_entries::SignerList>,
+        nicknames: std::collections::HashMap<UInt256, crate::ledger_entries::NicknameEntry>,
+        account_nicknames: std::collections::HashMap<AccountID, Vec<crate::ledger_entries::NicknameEntry>>,
+        deposit_preauths: std::collections::HashMap<(AccountID, AccountID), crate::ledger_entries::DepositPreauth>,
     }
 
     impl MockLedgerView {
         fn new() -> Self {
             Self {
                 accounts: std::collections::HashMap::new(),
+                call_states: std::collections::HashMap::new(),
+                offers: std::collections::HashMap::new(),
+                signer_lists: std::collections::HashMap::new(),
+                nicknames: std::collections::HashMap::new(),
+                account_nicknames: std::collections::HashMap::new(),
+                deposit_preauths: std::collections::HashMap::new(),
             }
         }
     }
@@ -1231,49 +1233,73 @@ mod tests {
             self.accounts.insert(account.account, account.clone());
         }
 
-        fn get_call_state(&self, _account: &AccountID, _issuer: &AccountID, _currency: &Currency) -> Option<CallState> {
-            None
+        fn get_call_state(&self, account: &AccountID, issuer: &AccountID, currency: &Currency) -> Option<CallState> {
+            self.call_states.get(&(*account, *issuer, *currency)).cloned()
         }
 
-        fn set_call_state(&mut self, _state: &CallState) {}
-
-        fn get_offer(&self, _account: &AccountID, _sequence: u32) -> Option<OfferEntry> {
-            None
+        fn set_call_state(&mut self, state: &CallState) {
+            let key = (state.account, state.issuer, state.currency);
+            self.call_states.insert(key, state.clone());
         }
 
-        fn set_offer(&mut self, _offer: &OfferEntry) {}
+        fn get_offer(&self, account: &AccountID, sequence: u32) -> Option<OfferEntry> {
+            self.offers.get(&(*account, sequence)).cloned()
+        }
 
-        fn delete_offer(&mut self, _account: &AccountID, _sequence: u32) {}
+        fn set_offer(&mut self, offer: &OfferEntry) {
+            self.offers.insert((offer.account, offer.sequence), offer.clone());
+        }
+
+        fn delete_offer(&mut self, account: &AccountID, sequence: u32) {
+            self.offers.remove(&(*account, sequence));
+        }
 
         fn get_ledger_info(&self) -> crate::ledger::LedgerInfo {
             crate::ledger::LedgerInfo::default()
         }
 
-        fn get_signer_list(&self, _account: &AccountID) -> Option<crate::ledger_entries::SignerList> {
-            None
+        fn get_signer_list(&self, account: &AccountID) -> Option<crate::ledger_entries::SignerList> {
+            self.signer_lists.get(account).cloned()
         }
 
-        fn set_signer_list(&mut self, _signer_list: &crate::ledger_entries::SignerList) {}
-
-        fn get_nickname_entry(&self, _nickname_index: &UInt256) -> Option<crate::ledger_entries::NicknameEntry> {
-            None
+        fn set_signer_list(&mut self, signer_list: &crate::ledger_entries::SignerList) {
+            self.signer_lists.insert(signer_list.account, signer_list.clone());
         }
 
-        fn set_nickname_entry(&mut self, _nickname: &crate::ledger_entries::NicknameEntry) {}
-
-        fn get_account_nicknames(&self, _account: &AccountID) -> Vec<crate::ledger_entries::NicknameEntry> {
-            Vec::new()
+        fn get_nickname_entry(&self, nickname_index: &UInt256) -> Option<crate::ledger_entries::NicknameEntry> {
+            self.nicknames.get(nickname_index).cloned()
         }
 
-        fn get_deposit_preauth(&self, _account: &AccountID, _authorize: &AccountID) -> Option<crate::ledger_entries::DepositPreauth> {
-            None
+        fn set_nickname_entry(&mut self, nickname: &crate::ledger_entries::NicknameEntry) {
+            let index = nickname.ledger_index();
+            self.nicknames.insert(index, nickname.clone());
+            self.account_nicknames.entry(nickname.account).or_default().push(nickname.clone());
         }
 
-        fn set_deposit_preauth(&mut self, _preauth: &crate::ledger_entries::DepositPreauth) {}
+        fn get_account_nicknames(&self, account: &AccountID) -> Vec<crate::ledger_entries::NicknameEntry> {
+            self.account_nicknames.get(account).cloned().unwrap_or_default()
+        }
 
-        fn delete_deposit_preauth(&mut self, _account: &AccountID, _authorize: &AccountID) {}
+        fn get_deposit_preauth(&self, account: &AccountID, authorize: &AccountID) -> Option<crate::ledger_entries::DepositPreauth> {
+            self.deposit_preauths.get(&(*account, *authorize)).cloned()
+        }
 
-        fn is_authorized_to_send(&self, _sender: &AccountID, _recipient: &AccountID) -> bool {
+        fn set_deposit_preauth(&mut self, preauth: &crate::ledger_entries::DepositPreauth) {
+            self.deposit_preauths.insert((preauth.account, preauth.authorize), preauth.clone());
+        }
+
+        fn delete_deposit_preauth(&mut self, account: &AccountID, authorize: &AccountID) {
+            self.deposit_preauths.remove(&(*account, *authorize));
+        }
+
+        fn is_authorized_to_send(&self, sender: &AccountID, recipient: &AccountID) -> bool {
+            if let Some(recipient_account) = self.get_account_root(recipient) {
+                if recipient_account.has_flag(crate::ledger_entries::account_flags::LSF_DEPOSIT_AUTH) {
+                    return self.get_deposit_preauth(recipient, sender)
+                        .map(|p| p.is_active())
+                        .unwrap_or(false);
+                }
+            }
             true
         }
     }

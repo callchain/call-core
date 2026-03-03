@@ -540,11 +540,24 @@ fn sign_transaction_local(key: &str, tx: &str) -> anyhow::Result<()> {
     let tx_json: serde_json::Value = serde_json::from_str(&tx_json_str)
         .map_err(|e| anyhow::anyhow!("Invalid transaction JSON: {}", e))?;
 
-    // Parse private key
+    // Parse private key (hex or mnemonic)
     let private_key = if key.starts_with("mnemonic:") {
-        return Err(anyhow::anyhow!("Mnemonic-derived signing not yet implemented. Use hex private key instead."));
+        // Parse mnemonic phrase and derive private key
+        let mnemonic = key.strip_prefix("mnemonic:").unwrap_or(key);
+        let wallet = crypto::MnemonicWallet::from_mnemonic(mnemonic)
+            .map_err(|e| anyhow::anyhow!("Invalid mnemonic: {:?}", e))?;
+
+        // Derive the first account (m/44'/644'/0'/0/0)
+        let derived = wallet.derive_account(0, 0, 0)
+            .ok_or_else(|| anyhow::anyhow!("Failed to derive account from mnemonic"))?;
+
+        // Convert derived private key bytes to PrivateKey
+        let key_bytes = hex::decode(&derived.private_key)
+            .map_err(|_| anyhow::anyhow!("Failed to decode derived private key"))?;
+        PrivateKey::from_bytes(KeyType::Secp256k1, &key_bytes)
+            .ok_or_else(|| anyhow::anyhow!("Invalid derived private key"))?
     } else {
-        // Parse hex private key
+        // Parse hex private key directly
         let key_bytes = hex::decode(key)
             .map_err(|_| anyhow::anyhow!("Invalid hex private key"))?;
         PrivateKey::from_bytes(KeyType::Secp256k1, &key_bytes)

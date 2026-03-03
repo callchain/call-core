@@ -1864,8 +1864,12 @@ impl LedgerState {
     }
 
     pub fn delete_nickname(&mut self, nickname: &[u8]) {
-        // Note: SHAMap doesn't have a direct remove method in the current API
-        let _ = nickname;
+        // Remove from nickname index first
+        let nick_str = String::from_utf8_lossy(nickname).to_lowercase();
+        if let Some(index) = self.nickname_index.remove(&nick_str) {
+            // Remove from SHAMap
+            self.state_map.remove_item(&index);
+        }
     }
 
     pub fn get_signer_list(&self, account: &AccountID) -> Option<SignerList> {
