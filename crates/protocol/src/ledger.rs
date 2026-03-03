@@ -1,4 +1,4 @@
-use primitives::UInt256;
+use primitives::{AccountID, UInt256};
 use serialization::STObject;
 use shamap::{SHAMap, SHAMapItem, SHAMapType};
 
@@ -315,6 +315,44 @@ impl Ledger {
 
         sha512_half(&data)
     }
+
+    /// Iterate over all state items in the ledger
+    pub fn items(&self) -> impl Iterator<Item = (UInt256, STObject)> + '_ {
+        self.state_tree.iter().filter_map(|item| {
+            let key = item.key();
+            // Parse the serialized data into STObject
+            let mut iter = serialization::SerialIter::new(item.data());
+            match iter.get_object() {
+                Ok(obj) => Some((key, obj)),
+                Err(_) => None,
+            }
+        })
+    }
+}
+
+impl ReadView for Ledger {
+    fn get_ledger_info(&self) -> &LedgerInfo {
+        &self.info
+    }
+
+    fn read(&self, key: &UInt256) -> Option<STObject> {
+        self.get_state_entry(key).and_then(|item| {
+            let mut iter = serialization::SerialIter::new(item.data());
+            iter.get_object().ok()
+        })
+    }
+
+    fn items(&self) -> Box<dyn Iterator<Item = (UInt256, STObject)> + '_> {
+        Box::new(self.items())
+    }
+
+    fn transactions(&self) -> Box<dyn Iterator<Item = UInt256> + '_> {
+        Box::new(self.transactions.clone().into_iter())
+    }
+
+    fn has_transaction(&self, tx_hash: &UInt256) -> bool {
+        self.transactions.contains(tx_hash)
+    }
 }
 
 /// LedgerView provides read-only access to ledger data
@@ -391,8 +429,26 @@ impl<'a> ReadView for OpenView<'a> {
     }
 
     fn items(&self) -> Box<dyn Iterator<Item = (UInt256, STObject)> + '_> {
-        // Combine base items with changes
-        Box::new(std::iter::empty()) // Simplified for now
+        // Collect all items from base, applying changes
+        let mut items: Vec<(UInt256, STObject)> = Vec::new();
+        let mut changed_keys = std::collections::HashSet::new();
+
+        // Add all items from changes that are Some (inserts/updates)
+        for (key, value) in &self.changes {
+            changed_keys.insert(*key);
+            if let Some(obj) = value {
+                items.push((*key, obj.clone()));
+            }
+        }
+
+        // Add base items that haven't been changed
+        for (key, obj) in self.base.items() {
+            if !changed_keys.contains(&key) {
+                items.push((key, obj));
+            }
+        }
+
+        Box::new(items.into_iter())
     }
 
     fn transactions(&self) -> Box<dyn Iterator<Item = UInt256> + '_> {
@@ -439,5 +495,95 @@ mod tests {
         let tx_hash = UInt256::new([1u8; 32]);
         ledger.add_transaction(tx_hash);
         assert_eq!(ledger.transaction_count(), 1);
+    }
+
+    #[test]
+    fn test_ledger_items() {
+        use serialization::types::sf;
+        let mut ledger = Ledger::genesis();
+
+        // Initially empty (genesis has no state)
+        let items: Vec<_> = ledger.items().collect();
+        assert!(items.is_empty());
+
+        // Add a state entry
+        let key = UInt256::new([1u8; 32]);
+        let mut obj = STObject::new();
+        obj.insert(sf::ACCOUNT, serialization::STValue::Account(AccountID::new([2u8; 20])));
+
+        let mut serializer = serialization::Serializer::new();
+        serializer.add_object(&obj).unwrap();
+        let data = serializer.finish();
+
+        ledger.add_state_entry(key, data);
+
+        // Now should have one item
+        let items: Vec<_> = ledger.items().collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, key);
+    }
+
+    #[test]
+    fn test_read_view_ledger() {
+        use serialization::types::sf;
+        let mut ledger = Ledger::genesis();
+
+        // Add a state entry
+        let key = UInt256::new([1u8; 32]);
+        let mut obj = STObject::new();
+        obj.insert(sf::ACCOUNT, serialization::STValue::Account(AccountID::new([2u8; 20])));
+
+        let mut serializer = serialization::Serializer::new();
+        serializer.add_object(&obj).unwrap();
+        let data = serializer.finish();
+
+        ledger.add_state_entry(key, data);
+
+        // Test ReadView implementation
+        let items: Vec<_> = ledger.items().collect();
+        assert_eq!(items.len(), 1);
+
+        // Test read method
+        let read_obj = ledger.read(&key);
+        assert!(read_obj.is_some());
+    }
+
+    #[test]
+    fn test_open_view_items() {
+        use serialization::types::sf;
+        let mut ledger = Ledger::genesis();
+
+        // Add initial state to ledger
+        let key1 = UInt256::new([1u8; 32]);
+        let mut obj1 = STObject::new();
+        obj1.insert(sf::ACCOUNT, serialization::STValue::Account(AccountID::new([1u8; 20])));
+        let mut serializer = serialization::Serializer::new();
+        serializer.add_object(&obj1).unwrap();
+        ledger.add_state_entry(key1, serializer.finish());
+
+        // Create OpenView on top of ledger
+        let mut open_view = OpenView::new(&ledger);
+
+        // Initially should have the base item
+        let items: Vec<_> = open_view.items().collect();
+        assert_eq!(items.len(), 1);
+
+        // Insert a new item
+        let key2 = UInt256::new([2u8; 32]);
+        let mut obj2 = STObject::new();
+        obj2.insert(sf::ACCOUNT, serialization::STValue::Account(AccountID::new([2u8; 20])));
+        open_view.insert(key2, obj2.clone());
+
+        // Now should have two items
+        let items: Vec<_> = open_view.items().collect();
+        assert_eq!(items.len(), 2);
+
+        // Erase the first item
+        open_view.erase(key1);
+
+        // Now should have one item (the new one)
+        let items: Vec<_> = open_view.items().collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, key2);
     }
 }

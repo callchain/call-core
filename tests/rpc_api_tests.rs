@@ -70,7 +70,40 @@ impl RpcResponse {
 // Mock RPC Handler for Testing
 // ============================================================================
 
-/// Mock RPC handler for testing without a full node
+/// # Mock RPC Handler
+///
+/// This mock provides a lightweight RPC handler for unit testing the JSON-RPC API
+/// without requiring a full node instance. It simulates basic ledger state and
+/// responds to RPC requests with predetermined responses.
+///
+/// ## Purpose
+/// - Test RPC request/response formatting and serialization
+/// - Validate RPC method routing and parameter handling
+/// - Enable fast unit tests without network or database dependencies
+///
+/// ## Limitations
+/// - Does NOT execute real transactions or consensus
+/// - Uses a fixed genesis ledger (no ledger advancement)
+/// - Account data is simulated, not computed from transaction history
+/// - Not suitable for integration tests (use `TestNode` for those)
+///
+/// ## Usage
+/// ```rust
+/// let handler = MockRpcHandler::new();
+/// let response = handler.process_request(rpc_json);
+/// ```
+///
+/// ## When to Use
+/// - Unit testing individual RPC handlers
+/// - Testing request validation and error responses
+/// - Testing JSON serialization/deserialization
+///
+/// ## When NOT to Use
+/// - Integration tests requiring real transaction processing
+/// - Tests needing ledger advancement or consensus
+/// - Tests requiring persistent state
+///
+/// #TODO: Consider using `BasicLedgerView` from `protocol::views` for more realistic state
 struct MockRpcHandler {
     ledger: Ledger,
     accounts: Vec<AccountID>,

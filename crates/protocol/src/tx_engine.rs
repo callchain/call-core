@@ -1173,6 +1173,43 @@ mod tests {
     use primitives::{AccountID, Currency};
     use serialization::Amount;
 
+    /// # Mock Ledger View (Functional)
+    ///
+    /// A functional mock implementation of `LedgerView` for testing transaction processing.
+    ///
+    /// ## Purpose
+    /// - Test transaction processing without a full ledger
+    /// - Store and retrieve account state changes during tests
+    /// - Enable stateful testing of transaction effects
+    ///
+    /// ## Features
+    /// - HashMap-based account storage
+    /// - Supports account creation and balance updates
+    /// - Implements all `LedgerView` trait methods
+    ///
+    /// ## Limitations
+    /// - Does NOT persist state to disk
+    /// - Does NOT support other ledger entry types (CallState, Offers, etc.)
+    /// - Not suitable for integration tests requiring full ledger behavior
+    ///
+    /// ## Usage
+    /// ```rust
+    /// let mut view = MockLedgerView::new();
+    /// let account = AccountID::new([1u8; 20]);
+    /// // Set up initial state
+    /// view.set_account_root(&AccountRoot::new(account).with_balance(1000000));
+    /// // Process transactions
+    /// ```
+    ///
+    /// ## When to Use
+    /// - Unit testing transaction processing logic
+    /// - Testing balance changes and fee calculations
+    /// - Testing account state transitions
+    ///
+    /// ## When NOT to Use
+    /// - Tests requiring CallState (trust lines)
+    /// - Tests requiring Offer processing
+    /// - Integration tests (use `BasicLedgerView` from `views.rs` instead)
     struct MockLedgerView {
         accounts: std::collections::HashMap<AccountID, AccountRoot>,
     }

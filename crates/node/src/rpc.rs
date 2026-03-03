@@ -934,6 +934,14 @@ impl RpcHandler for AppRpcHandler {
                                 "balance": fr.balance.mantissa.to_string(),
                             })
                         }
+                        protocol::LedgerObject::DepositPreauth(dp) => {
+                            serde_json::json!({
+                                "type": "deposit_preauth",
+                                "account": hex::encode(dp.account.as_bytes()),
+                                "authorize": hex::encode(dp.authorize.as_bytes()),
+                                "flags": dp.flags,
+                            })
+                        }
                     })
                     .collect();
 
@@ -1740,10 +1748,18 @@ impl RpcHandler for AppRpcHandler {
                         }
                     }
                 } else {
-                    // Network manager not available - return mock success for testing
+                    // Network manager not available - node is running in standalone/offline mode
+                    // This occurs when the RPC server is started without network components
+                    // (e.g., during testing or when networking is disabled)
+                    tracing::warn!(
+                        "RPC connect request to {} ignored - network manager not available",
+                        peer_addr
+                    );
                     serde_json::json!({
-                        "status": "success",
-                        "message": format!("Connection attempt to {} (network manager not available)", peer_addr),
+                        "status": "error",
+                        "error_code": 5020,
+                        "error_message": "Network manager not available",
+                        "message": format!("Cannot connect to {} - networking is disabled", peer_addr),
                         "peer_address": peer_addr_str,
                         "connected": false,
                     })

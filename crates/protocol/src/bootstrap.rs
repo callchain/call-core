@@ -126,6 +126,11 @@ pub struct SyncStats {
     pub ledgers_fetched: usize,
     pub ledgers_to_fetch: usize,
     pub transactions_fetched: usize,
+    pub transactions_to_fetch: usize,
+    /// Total bytes fetched (for weighted progress)
+    pub bytes_fetched: usize,
+    /// Total bytes expected (for weighted progress)
+    pub bytes_to_fetch: usize,
     pub start_time: Instant,
     pub last_progress: Instant,
     pub current_ledger: LedgerIndex,
@@ -140,11 +145,117 @@ impl Default for SyncStats {
             ledgers_fetched: 0,
             ledgers_to_fetch: 0,
             transactions_fetched: 0,
+            transactions_to_fetch: 0,
+            bytes_fetched: 0,
+            bytes_to_fetch: 0,
             start_time: now,
             last_progress: now,
             current_ledger: 0,
             target_ledger: 0,
         }
+    }
+}
+
+impl SyncStats {
+    /// Calculate simple progress percentage based on ledger count
+    pub fn progress_percent(&self) -> f64 {
+        if self.ledgers_to_fetch == 0 {
+            return 100.0;
+        }
+        (self.ledgers_fetched as f64 / self.ledgers_to_fetch as f64) * 100.0
+    }
+
+    /// Calculate weighted progress percentage considering ledger sizes
+    ///
+    /// This gives more accurate progress when ledgers have different sizes.
+    /// Uses bytes fetched vs bytes expected when available, otherwise falls
+    /// back to transaction count weighting.
+    pub fn weighted_progress_percent(&self) -> f64 {
+        // If we have byte information, use it for most accurate progress
+        if self.bytes_to_fetch > 0 {
+            return ((self.bytes_fetched as f64 / self.bytes_to_fetch as f64) * 100.0)
+                .min(100.0);
+        }
+
+        // Fall back to transaction-based weighting
+        if self.transactions_to_fetch > 0 {
+            return ((self.transactions_fetched as f64 / self.transactions_to_fetch as f64) * 100.0)
+                .min(100.0);
+        }
+
+        // Fall back to simple ledger counting
+        self.progress_percent()
+    }
+
+    /// Estimate time remaining in seconds
+    ///
+    /// Returns None if not enough data to make an estimate
+    pub fn estimated_time_remaining(&self) -> Option<u64> {
+        if self.ledgers_to_fetch == 0 || self.ledgers_fetched == 0 {
+            return None;
+        }
+
+        let elapsed = self.start_time.elapsed().as_secs();
+        if elapsed == 0 {
+            return None;
+        }
+
+        // Calculate rate based on weighted progress if available
+        let progress = self.weighted_progress_percent();
+        if progress <= 0.0 || progress >= 100.0 {
+            return Some(0);
+        }
+
+        // rate = progress / elapsed
+        // remaining_progress = 100 - progress
+        // time_remaining = remaining_progress / rate
+        let remaining_progress = 100.0 - progress;
+        let rate = progress / elapsed as f64;
+        let remaining_secs = (remaining_progress / rate) as u64;
+
+        Some(remaining_secs)
+    }
+
+    /// Get a human-readable progress summary
+    pub fn progress_summary(&self) -> String {
+        let percent = self.weighted_progress_percent();
+        let eta = self.estimated_time_remaining();
+
+        let eta_str = match eta {
+            Some(0) => " (complete)".to_string(),
+            Some(secs) if secs < 60 => format!(" (~{}s remaining)", secs),
+            Some(secs) if secs < 3600 => format!(" (~{}m remaining)", secs / 60),
+            Some(secs) => format!(" (~{}h remaining)", secs / 3600),
+            None => " (calculating...)".to_string(),
+        };
+
+        format!(
+            "{:.1}% - {}/{} ledgers, {}/{} txs{}",
+            percent,
+            self.ledgers_fetched,
+            self.ledgers_to_fetch,
+            self.transactions_fetched,
+            self.transactions_to_fetch,
+            eta_str
+        )
+    }
+
+    /// Get current sync rate (ledgers per second)
+    pub fn sync_rate_ledgers_per_sec(&self) -> f64 {
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        if elapsed < 0.001 {
+            return 0.0;
+        }
+        self.ledgers_fetched as f64 / elapsed
+    }
+
+    /// Get current sync rate (transactions per second)
+    pub fn sync_rate_txs_per_sec(&self) -> f64 {
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        if elapsed < 0.001 {
+            return 0.0;
+        }
+        self.transactions_fetched as f64 / elapsed
     }
 }
 
@@ -539,12 +650,24 @@ impl LedgerSynchronizer {
         &self.stats
     }
 
-    /// Get progress percentage
+    /// Get simple progress percentage based on ledger count
     pub fn progress_percent(&self) -> f64 {
-        if self.stats.ledgers_to_fetch == 0 {
-            return 100.0;
-        }
-        (self.stats.ledgers_fetched as f64 / self.stats.ledgers_to_fetch as f64) * 100.0
+        self.stats.progress_percent()
+    }
+
+    /// Get weighted progress percentage (considers ledger/transaction sizes)
+    pub fn weighted_progress_percent(&self) -> f64 {
+        self.stats.weighted_progress_percent()
+    }
+
+    /// Get estimated time remaining in seconds
+    pub fn estimated_time_remaining(&self) -> Option<u64> {
+        self.stats.estimated_time_remaining()
+    }
+
+    /// Get human-readable progress summary with ETA
+    pub fn progress_summary(&self) -> String {
+        self.stats.progress_summary()
     }
 
     /// Whether sync is complete
@@ -952,6 +1075,59 @@ mod tests {
 
         assert_eq!(sync.stats().ledgers_fetched, 25);
         assert_eq!(sync.progress_percent(), 25.0);
+    }
+
+    #[test]
+    fn test_weighted_progress_calculation() {
+        let mut stats = SyncStats::default();
+
+        // Test with no data
+        assert_eq!(stats.weighted_progress_percent(), 100.0);
+
+        // Test simple ledger-based progress
+        stats.ledgers_to_fetch = 100;
+        stats.ledgers_fetched = 25;
+        assert_eq!(stats.weighted_progress_percent(), 25.0);
+
+        // Test transaction-weighted progress (takes priority)
+        stats.transactions_to_fetch = 1000;
+        stats.transactions_fetched = 500;
+        assert_eq!(stats.weighted_progress_percent(), 50.0);
+
+        // Test byte-weighted progress (takes highest priority)
+        stats.bytes_to_fetch = 10000;
+        stats.bytes_fetched = 7500;
+        assert_eq!(stats.weighted_progress_percent(), 75.0);
+    }
+
+    #[test]
+    fn test_progress_summary() {
+        let mut stats = SyncStats::default();
+        stats.ledgers_to_fetch = 100;
+        stats.ledgers_fetched = 50;
+        stats.transactions_to_fetch = 1000;
+        stats.transactions_fetched = 500;
+
+        let summary = stats.progress_summary();
+        assert!(summary.contains("50.0%"));
+        assert!(summary.contains("50/100 ledgers"));
+        assert!(summary.contains("500/1000 txs"));
+    }
+
+    #[test]
+    fn test_sync_rate_calculation() {
+        let mut stats = SyncStats::default();
+
+        // With no elapsed time, rate should be 0
+        assert_eq!(stats.sync_rate_ledgers_per_sec(), 0.0);
+        assert_eq!(stats.sync_rate_txs_per_sec(), 0.0);
+
+        // Simulate some progress (can't test actual rates without time passing)
+        stats.ledgers_fetched = 10;
+        stats.transactions_fetched = 100;
+        // Rate will be very small due to minimal elapsed time
+        assert!(stats.sync_rate_ledgers_per_sec() >= 0.0);
+        assert!(stats.sync_rate_txs_per_sec() >= 0.0);
     }
 
     #[test]

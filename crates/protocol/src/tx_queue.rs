@@ -320,7 +320,6 @@ impl TransactionQueue {
     }
 
     fn current_time(&self) -> u64 {
-        // In a real implementation, use actual time
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -521,6 +520,25 @@ mod tests {
     use super::*;
     use crate::ledger_entries::AccountRoot;
 
+    /// # Mock Ledger View (Simple)
+    ///
+    /// A minimal mock implementation of `LedgerView` for testing transaction queuing.
+    ///
+    /// ## Purpose
+    /// - Test transaction queuing logic without a full ledger
+    /// - Provide hardcoded account responses for unit tests
+    ///
+    /// ## Limitations
+    /// - Does NOT persist state changes
+    /// - Returns hardcoded account data (all accounts have 1 CALL balance)
+    /// - Not suitable for tests requiring state verification
+    ///
+    /// ## Note
+    /// Consider using the more functional `MockLedgerView` in `tx_engine.rs` which
+    /// includes HashMap storage for accounts. This implementation may be removed
+    /// in favor of that one.
+    ///
+    /// # TODO: Consolidate with MockLedgerView in tx_engine.rs or use BasicLedgerView
     #[allow(dead_code)]
     struct MockLedgerView;
 

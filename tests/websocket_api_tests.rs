@@ -94,7 +94,42 @@ impl WsResponse {
 // Mock WebSocket Handler
 // ============================================================================
 
-/// Mock WebSocket handler for testing
+/// # Mock WebSocket Handler
+///
+/// This mock provides a lightweight WebSocket handler for unit testing the WebSocket API
+/// without requiring a full node instance. It simulates subscription management and
+/// responds to WebSocket messages with predetermined responses.
+///
+/// ## Purpose
+/// - Test WebSocket message routing and command handling
+/// - Test subscription/unsubscription logic
+/// - Validate request/response formatting and serialization
+/// - Enable fast unit tests without network or database dependencies
+///
+/// ## Limitations
+/// - Does NOT execute real transactions or consensus
+/// - Does NOT send real-time ledger updates (subscriptions are tracked but not acted upon)
+/// - Uses simulated account data, not computed from transaction history
+/// - Not suitable for integration tests requiring actual subscription streaming
+///
+/// ## Usage
+/// ```rust
+/// let mut handler = MockWsHandler::new();
+/// let response = handler.process_message(rpc_json);
+/// ```
+///
+/// ## When to Use
+/// - Unit testing individual WebSocket command handlers
+/// - Testing subscription management logic
+/// - Testing request validation and error responses
+/// - Testing JSON serialization/deserialization for WebSocket format
+///
+/// ## When NOT to Use
+/// - Integration tests requiring real subscription streaming
+/// - Tests needing actual ledger update notifications
+/// - Tests requiring persistent state or transaction processing
+///
+/// # TODO: Consider using `BasicLedgerView` from `protocol::views` for more realistic state
 struct MockWsHandler {
     subscriptions: Vec<String>,
     account_subscriptions: Vec<String>,
