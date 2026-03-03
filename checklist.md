@@ -96,7 +96,7 @@ Excluded features (as requested): Escrow, Payment Channels, Ticket transactions
 | account_offers | ✅ | ✅ | ✅ Implemented |
 | account_tx | ✅ | ✅ | ✅ Implemented |
 | account_issues | ✅ | ✅ | ✅ Implemented |
-| account_invoices | ✅ | ⚠️ | Partial |
+| account_invoices | ✅ | ✅ | ✅ Implemented |
 | account_channels | ✅ | ❌ | ⚠️ Excluded (PayChan) |
 | gateway_balances | ✅ | ✅ | ✅ Implemented |
 | owner_info | ✅ | ✅ | ✅ Implemented |
@@ -111,7 +111,7 @@ Excluded features (as requested): Escrow, Payment Channels, Ticket transactions
 | ledger_data | ✅ | ✅ | ✅ Implemented |
 | ledger_entry | ✅ | ✅ | ✅ Implemented |
 | ledger_header | ✅ | ✅ | ✅ Implemented |
-| ledger_request | ✅ | ⚠️ | Partial |
+| ledger_request | ✅ | ✅ | ✅ Implemented |
 | ledger_accept | ✅ | ✅ | ✅ Implemented |
 | ledger_cleaner | ✅ | ✅ | ✅ Implemented |
 
@@ -141,7 +141,7 @@ Excluded features (as requested): Escrow, Payment Channels, Ticket transactions
 | server_state | ✅ | ✅ | ✅ Implemented |
 | ping | ✅ | ✅ | ✅ Implemented |
 | stop | ✅ | ✅ | ✅ Implemented |
-| version | ✅ | ⚠️ | Basic |
+| version | ✅ | ✅ | ✅ Implemented |
 
 ### Consensus / Network Methods
 | Method | calld | call-core | Status |
@@ -152,8 +152,8 @@ Excluded features (as requested): Escrow, Payment Channels, Ticket transactions
 | connect | ✅ | ✅ | ✅ Implemented |
 | validators | ✅ | ✅ | ✅ Implemented |
 | validators_site | ✅ | ✅ | ✅ Implemented |
-| unl_list | ✅ | ⚠️ | Partial |
-| feature | ✅ | ⚠️ | Partial |
+| unl_list | ✅ | ✅ | ✅ Implemented |
+| feature | ✅ | ✅ | ✅ Implemented |
 | blacklist | ✅ | ⚠️ | Partial |
 
 ### Wallet / Key Methods
