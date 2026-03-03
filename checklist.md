@@ -292,7 +292,96 @@ Excluded features (as requested): Escrow, Payment Channels, Ticket transactions
 
 ## Missing Features to Implement
 
-### All Features - ✅ COMPLETED
+### Critical Missing Features (Modern Ripple/XRP Ledger)
+
+#### 1. Checks ⏳ NOT IMPLEMENTED
+**Transaction Types:**
+- [ ] CheckCreate (Type 16) - Create a Check
+- [ ] CheckCash (Type 17) - Cash a Check
+- [ ] CheckCancel (Type 18) - Cancel a Check
+
+**Ledger Entry:**
+- [ ] Check - Check ledger entry
+
+**RPC Methods:**
+- [ ] account_objects (Check support)
+
+**Status:** Not implemented in call-core. These allow deferred payments like traditional checks.
+
+---
+
+#### 2. NFTs (Non-Fungible Tokens) ⏳ NOT IMPLEMENTED
+**Transaction Types:**
+- [ ] NFTokenMint (Type 25) - Mint an NFT
+- [ ] NFTokenBurn (Type 26) - Burn an NFT
+- [ ] NFTokenCreateOffer (Type 27) - Create NFT offer
+- [ ] NFTokenCancelOffer (Type 28) - Cancel NFT offer
+- [ ] NFTokenAcceptOffer (Type 29) - Accept NFT offer
+
+**Ledger Entries:**
+- [ ] NFTokenPage - NFT collection storage
+- [ ] NFTokenOffer - NFT offer entry
+
+**RPC Methods:**
+- [ ] account_nfts - List account NFTs
+- [ ] nft_buy_offers - List NFT buy offers
+- [ ] nft_sell_offers - List NFT sell offers
+
+**Status:** Not implemented. Modern XRP Ledger feature for digital collectibles.
+
+---
+
+#### 3. AMM (Automated Market Maker) ⏳ NOT IMPLEMENTED
+**Transaction Types:**
+- [ ] AMMCreate (Type 35) - Create AMM pool
+- [ ] AMMDeposit (Type 36) - Deposit to AMM
+- [ ] AMMWithdraw (Type 37) - Withdraw from AMM
+- [ ] AMMSwap (Type 38) - Swap through AMM
+- [ ] AMMClawback (Type 39) - Clawback from AMM
+- [ ] AMMVote (Type 40) - Vote on AMM fees
+- [ ] AMMDelete (Type 41) - Delete empty AMM
+
+**Ledger Entry:**
+- [ ] AMM - AMM pool entry
+
+**RPC Methods:**
+- [ ] amm_info - Get AMM pool information
+
+**Status:** Not implemented. Modern DEX feature for liquidity pools.
+
+---
+
+#### 4. DID (Decentralized Identifiers) ⏳ NOT IMPLEMENTED
+**Transaction Types:**
+- [ ] DIDSet (Type 42) - Create/update DID
+- [ ] DIDDelete (Type 43) - Delete DID
+
+**Ledger Entry:**
+- [ ] DID - DID document storage
+
+**RPC Methods:**
+- [ ] did_query - Query DID information
+
+**Status:** Not implemented. W3C standard for self-sovereign identity.
+
+---
+
+#### 5. Oracle ⏳ NOT IMPLEMENTED
+**Transaction Types:**
+- [ ] OracleSet (Type 44) - Create/update price oracle
+- [ ] OracleDelete (Type 45) - Delete oracle
+
+**Ledger Entry:**
+- [ ] Oracle - Price oracle data
+
+**RPC Methods:**
+- [ ] oracle_get - Get oracle price data
+
+**Status:** Not implemented. External data feed for smart contracts.
+
+---
+
+### Completed Features ✅
 1. ~~**Pseudotransactions**: EnableAmendment, SetFee~~ ✅
 2. ~~**Account Flags**: lsfRequireDestTag, lsfDisableMaster, lsfNoFreeze, lsfGlobalFreeze~~ ✅
 3. ~~**Transaction Fields**: sfDeliverMin (partial payments), sfInvoice~~ ✅
@@ -304,23 +393,27 @@ Excluded features (as requested): Escrow, Payment Channels, Ticket transactions
 9. ~~**Advanced Admin**: crawl_shards ✅, download_shard ✅, node_to_shard ✅, validators ✅, validators_site ✅~~
 10. ~~**Testing RPC**: ledger_accept ✅, sign ✅, sign_for ✅~~
 
+---
+
 ## Notes
 - call-core has Callchain-specific features (IssueSet, NicknameSet, FeeRoot, IssueRoot, Invoice) not in calld
 - The Invoice field in Payment is Callchain-specific for NFT creation
 - call-core uses a cleaner architecture with separate crates for primitives, serialization, crypto, etc.
 - Some calld features may not be relevant for the Callchain use case
 - Many RPC methods exist but have basic implementations that could be enhanced
+- **Missing features are modern XRP Ledger additions** (Checks, NFTs, AMM, DID, Oracle) not in original calld
 
 ## Summary
 
 | Category | Implemented | Partial | Missing | Total |
 |----------|-------------|---------|---------|-------|
-| Transaction Types | 11 | 0 | 0 | 11 (excl. excluded) |
-| Ledger Entry Types | 12 | 0 | 0 | 12 |
+| Transaction Types | 11 | 0 | 20 (modern) | 31 total |
+| Ledger Entry Types | 12 | 0 | 7 (modern) | 19 total |
 | Network Messages | 13 | 0 | 0 | 13 |
-| Core RPC | 22 | 0 | 0 | 22 |
+| Core RPC | 50+ | 5 | 10+ | 65+ |
 | Admin RPC | 19 | 0 | 0 | 19 |
 | Subscriptions | 9 | 0 | 0 | 9 |
 
-**Core Functionality**: 100% Complete
-**Full Feature Set**: 100% Complete
+**Core Functionality (calld parity)**: ✅ 100% Complete
+**Modern XRP Ledger Features**: ⏳ Missing (Checks, NFTs, AMM, DID, Oracle)
+**Full Feature Set**: ~75% Complete
