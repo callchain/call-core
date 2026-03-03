@@ -80,7 +80,7 @@ cargo build --release
 ./target/release/calld ledger-info current
 
 # Show account information
-./target/release/calld account-info rN7n7otQDd6FczFgLdlqtyMVrn3HMfHgFj
+./target/release/calld account-info cN5E7s8x9y2z3w4v5u6t
 
 # Submit a transaction (hex blob)
 ./target/release/calld submit 12000022000000002400000001...
