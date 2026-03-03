@@ -202,7 +202,7 @@ Call Core supports the following transaction types:
 | Application | ✅ Complete | Node framework |
 | Testing | ✅ Complete | Integration tests |
 | Tools | ✅ Complete | CLI interface |
-| Documentation | 🔄 In Progress | Documentation |
+| Documentation | ✅ Complete | Comprehensive docs in `docs/` directory |
 
 ## Contributing
 
