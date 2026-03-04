@@ -45,7 +45,7 @@ RUN useradd -m -u 1000 callchain
 RUN mkdir -p /data && chown -R callchain:callchain /data
 
 # Copy binary from builder
-COPY --from=builder /usr/src/call-core/target/release/call-core /usr/local/bin/
+COPY --from=builder /usr/src/call-core/target/release/calld /usr/local/bin/
 
 # Set working directory
 WORKDIR /data
@@ -57,7 +57,7 @@ EXPOSE 51235 5005
 USER callchain
 
 # Default entrypoint
-ENTRYPOINT ["/usr/local/bin/call-core"]
+ENTRYPOINT ["/usr/local/bin/calld"]
 
 # Default command - start the node
 CMD ["start"]
