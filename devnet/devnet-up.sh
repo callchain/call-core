@@ -233,9 +233,11 @@ stress_devnet() {
     case "$stress_type" in
         simple)
             log_info "Running simple stress test ($iterations iterations)..."
+            log_info "This will submit transactions to the network and show them in ledger logs"
             python3 "$script_dir/simple_stress_test.py" \
                 --url http://localhost:5005 \
-                --iterations "$iterations"
+                --iterations 10 \
+                --tx-count "$((iterations / 10))"
             ;;
         full|comprehensive)
             log_info "Running comprehensive stress test ($iterations iterations, $threads threads)..."

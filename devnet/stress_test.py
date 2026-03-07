@@ -289,6 +289,8 @@ def run_stress_test(args) -> StressTestResults:
     print("Checking node connectivity...")
     if not rpc.ping():
         print("ERROR: Node is not responding to ping")
+        print("\nMake sure the devnet is running:")
+        print("  ./devnet/devnet-up.sh start")
         sys.exit(1)
 
     info = rpc.server_info()
