@@ -108,10 +108,14 @@ class CallCoreRPC:
     def ping(self) -> bool:
         """Check if node is alive"""
         response = self._call("ping")
-        # Check for both formats: {"result": "pong"} or {"status": "success"}
-        if "result" in response and response["result"] == "pong":
+        # Check for success in result.status or top-level status
+        result = response.get("result", {})
+        if isinstance(result, dict) and result.get("status") == "success":
             return True
-        if "status" in response and response["status"] == "success":
+        if response.get("status") == "success":
+            return True
+        # Also check for old format
+        if result == "pong":
             return True
         return False
 
