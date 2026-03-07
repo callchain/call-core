@@ -202,7 +202,7 @@ test_devnet() {
 
 # Stress test the devnet
 stress_devnet() {
-    local stress_type="${1:-simple}"
+    local stress_type="${1:-full}"
     local iterations="${2:-100}"
     local threads="${3:-4}"
 
@@ -288,12 +288,12 @@ print_usage() {
     echo "  logs        View logs (optionally specify node: node1, node2, node3)"
     echo "  clean       Remove all data and stop the devnet"
     echo "  test        Test the devnet connectivity"
-    echo "  stress      Run stress tests (simple|full|all) [iterations] [threads]"
+    echo "  stress      Run stress tests [type] [iterations] [threads]"
     echo "  help        Show this help message"
     echo ""
-    echo "Stress Test Options:"
-    echo "  simple      Basic RPC endpoint testing (default)"
-    echo "  full        Comprehensive transaction type testing"
+    echo "Stress Test Types:"
+    echo "  full        Comprehensive transaction testing (default)"
+    echo "  simple      Basic RPC endpoint testing only"
     echo "  all         Run both simple and full tests"
     echo ""
     echo "Examples:"
@@ -301,9 +301,9 @@ print_usage() {
     echo "  $0 logs                       # View all logs"
     echo "  $0 logs call-dev-node-1       # View logs for node 1"
     echo "  $0 test                       # Test connectivity"
-    echo "  $0 stress                     # Run simple stress test (100 iterations)"
-    echo "  $0 stress simple 500          # Run 500 simple iterations"
+    echo "  $0 stress                     # Run full stress test (default: 100 iters)"
     echo "  $0 stress full 100 8          # Run full test: 100 iterations, 8 threads"
+    echo "  $0 stress simple 500          # Run simple RPC test: 500 iterations"
     echo "  $0 stress all 50              # Run both tests with 50 iterations"
     echo "  $0 clean                      # Clean up everything"
 }
