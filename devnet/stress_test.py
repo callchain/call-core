@@ -108,7 +108,12 @@ class CallCoreRPC:
     def ping(self) -> bool:
         """Check if node is alive"""
         response = self._call("ping")
-        return "result" in response and response["result"] == "pong"
+        # Check for both formats: {"result": "pong"} or {"status": "success"}
+        if "result" in response and response["result"] == "pong":
+            return True
+        if "status" in response and response["status"] == "success":
+            return True
+        return False
 
     def server_info(self) -> Dict:
         """Get server info"""
