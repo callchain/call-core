@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Call-Core Devnet Stress Test Script
+Call-Core Devnet Stress Test Script with Real Transaction Signing
 
-Tests all transaction types against a running devnet:
+Tests all transaction types against a running devnet using genesis-funded accounts:
 - Payment
 - AccountSet
 - TrustSet
@@ -30,6 +30,46 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable
 from urllib.request import urlopen, Request
 from urllib.error import URLError
+
+
+# Genesis wallet information - funded accounts with known seeds
+GENESIS_WALLETS = [
+    {
+        "name": "Genesis Account 1",
+        "seed": "snTwCbEYk7ui94RuHn8SfWjs2jd5Y",
+        "address": "cagpMvZf6Z8GrnAPZdQgXrCqBvCFmQYfJi",
+        "hex_id": "3e39fcc137a272773c1e63fb52db14c5402ed192",
+        "balance": "100000000000"
+    },
+    {
+        "name": "Genesis Account 2",
+        "seed": "snMJdHz8J4hqCAUFctxft3fYLrXHR",
+        "address": "cGMbLyeUsUpjTtMFcCWZDVA4hdMXpjvPi3",
+        "hex_id": "a86ee011ed6d1aa7479d0c83cedf844b0b9805b6",
+        "balance": "50000000000"
+    },
+    {
+        "name": "Genesis Account 3",
+        "seed": "ssurbhFSvTy6iq3SqkwTE3PFVUc6o",
+        "address": "cadFKa9yk1Fv4PBj2DeZfYW48APXj4L8g",
+        "hex_id": "0110cfe0f005c09fff426f38477ae2f6e01d958e",
+        "balance": "25000000000"
+    },
+    {
+        "name": "Genesis Account 4",
+        "seed": "ssiRK6eJy1UKup76Cb4tXf6H37ZXy",
+        "address": "cLxud1QujAfeYszuY6DBwBhGE4fQ3GhKS5",
+        "hex_id": "dafd34b1e33a5d9aabb14cb49bafa974485142f9",
+        "balance": "10000000000"
+    },
+    {
+        "name": "Genesis Account 5",
+        "seed": "shNsiWGT6PqQKQGHYvtEuiaQWkjtf",
+        "address": "cGUQS4suRWMibEGCz46xxMVw45yB3h5Pio",
+        "hex_id": "a6b206dc858a38f5213336b49173a25cf2118a8d",
+        "balance": "5000000000"
+    }
+]
 
 
 @dataclass
@@ -116,13 +156,11 @@ class CallCoreRPC:
     def ping(self) -> bool:
         """Check if node is alive"""
         response = self._call("ping")
-        # Check for success in result.status or top-level status
         result = response.get("result", {})
         if isinstance(result, dict) and result.get("status") == "success":
             return True
         if response.get("status") == "success":
             return True
-        # Also check for old format
         if result == "pong":
             return True
         return False
@@ -139,11 +177,27 @@ class CallCoreRPC:
         """Force ledger close (for testing)"""
         return self._call("ledger_accept")
 
-    def wallet_propose(self) -> Optional[str]:
-        """Generate a new wallet"""
-        response = self._call("wallet_propose")
-        if "result" in response and "account_id" in response["result"]:
-            return response["result"]["account_id"]
+    def account_info(self, account: str) -> Dict:
+        """Get account info"""
+        return self._call("account_info", {"account": account})
+
+    def sign(self, secret: str, tx_json: Dict) -> Optional[str]:
+        """
+        Sign a transaction using the node's sign RPC method.
+        Returns the signed tx_blob or None if signing failed.
+        """
+        params = {
+            "secret": secret,
+            "tx_json": tx_json
+        }
+        response = self._call("sign", params)
+
+        if "error" in response:
+            return None
+
+        result = response.get("result", {})
+        if "tx_blob" in result:
+            return result["tx_blob"]
         return None
 
     def submit_transaction(self, tx_blob: str) -> Dict:
@@ -151,88 +205,39 @@ class CallCoreRPC:
         return self._call("submit", {"tx_blob": tx_blob})
 
 
-def create_payment_transaction(
-    sender: str,
-    destination: str,
-    amount: int,
-    sequence: int,
-    seed: str
-) -> str:
-    """Create a signed payment transaction blob (hex)"""
-    # This is a simplified placeholder - in a real implementation,
-    # you would use the crypto library to properly sign transactions
-    # For now, we'll create a dummy blob that the node might reject
-    # but tests the submission path
-
-    import hashlib
-    tx_data = f"{sender}:{destination}:{amount}:{sequence}:{seed}:{time.time()}"
-    return hashlib.sha256(tx_data.encode()).hexdigest()
-
-
 class TransactionTester:
-    """Tests all transaction types"""
+    """Tests all transaction types using genesis-funded accounts"""
 
     def __init__(self, rpc: CallCoreRPC):
         self.rpc = rpc
-        self.sequence = 1
+        # Track sequence numbers per account to avoid conflicts
+        self.sequences = {i: 1 for i in range(len(GENESIS_WALLETS))}
         self.lock = threading.Lock()
 
-    def _get_next_sequence(self) -> int:
+    def _get_next_sequence(self, account_index: int) -> int:
+        """Get the next sequence number for an account"""
         with self.lock:
-            seq = self.sequence
-            self.sequence += 1
+            seq = self.sequences[account_index]
+            self.sequences[account_index] = seq + 1
             return seq
 
-    def test_payment(self) -> TestResult:
-        """Test payment transaction"""
+    def _sign_and_submit(self, account_index: int, tx_json: Dict, tx_type: str) -> TestResult:
+        """Sign a transaction and submit it"""
         start = time.time()
-        try:
-            # Create test wallet addresses
-            sender = "rrrrrrrrrrrrrrrrrrrrrhoLvTp"  # Burn address placeholder
-            destination = "rrrrrrrrrrrrrrrrrrrrBZbvji"  # Another placeholder
+        wallet = GENESIS_WALLETS[account_index]
 
-            tx_blob = create_payment_transaction(
-                sender, destination, 1000000, self._get_next_sequence(), "test_seed"
-            )
-
-            response = self.rpc.submit_transaction(tx_blob)
+        # Sign the transaction
+        tx_blob = self.rpc.sign(wallet["seed"], tx_json)
+        if not tx_blob:
             elapsed = (time.time() - start) * 1000
+            return TestResult(tx_type, False, "Failed to sign transaction", elapsed)
 
-            # Check result - transaction may fail validation but submission should work
-            if "error" in response:
-                return TestResult("Payment", False, response["error"], elapsed)
-
-            result = response.get("result", {})
-            engine_result = result.get("engine_result", "")
-
-            # tesSUCCESS or ter codes mean the transaction was processed
-            if engine_result.startswith("tes") or engine_result.startswith("ter"):
-                return TestResult("Payment", True, None, elapsed, result.get("tx_hash"))
-            else:
-                return TestResult("Payment", False, engine_result, elapsed)
-
-        except Exception as e:
-            return TestResult("Payment", False, str(e), (time.time() - start) * 1000)
-
-    def _submit_dummy_transaction(self, tx_type: str) -> TestResult:
-        """Submit a dummy transaction blob to test the RPC pipeline"""
-        import hashlib
-        import secrets
-
-        start = time.time()
-
-        # Create a dummy transaction blob (not a real serialized transaction)
-        # This tests the submission pipeline but will fail validation
-        tx_data = f"{tx_type}:{secrets.token_hex(16)}:{self._get_next_sequence()}"
-        tx_blob = hashlib.sha256(tx_data.encode()).hexdigest()
-
+        # Submit the transaction
         response = self.rpc.submit_transaction(tx_blob)
         elapsed = (time.time() - start) * 1000
 
-        # Check for RPC errors (like Invalid params)
         if "error" in response:
             error = response["error"]
-            # If it's a JSON-RPC error, extract the message
             if isinstance(error, dict) and "message" in error:
                 return TestResult(tx_type, False, error["message"], elapsed)
             return TestResult(tx_type, False, str(error), elapsed)
@@ -240,53 +245,205 @@ class TransactionTester:
         result = response.get("result", {})
         engine_result = result.get("engine_result", "")
 
-        # tesSUCCESS means transaction was applied
         if engine_result == "tesSUCCESS":
             return TestResult(tx_type, True, None, elapsed, result.get("tx_hash"))
-        # ter codes are retryable errors
         elif engine_result.startswith("ter"):
             return TestResult(tx_type, False, f"{engine_result}: retryable error", elapsed)
-        # Other codes are failures
         elif engine_result:
             return TestResult(tx_type, False, engine_result, elapsed)
         else:
             return TestResult(tx_type, False, "No engine_result in response", elapsed)
 
+    def test_payment(self) -> TestResult:
+        """Test Payment transaction"""
+        sender_idx = 0
+        receiver = GENESIS_WALLETS[1]
+
+        tx_json = {
+            "TransactionType": "Payment",
+            "Account": GENESIS_WALLETS[sender_idx]["hex_id"],
+            "Destination": receiver["hex_id"],
+            "Amount": "1000000",  # 1 CALL in drops
+            "Sequence": self._get_next_sequence(sender_idx),
+            "Fee": "10"
+        }
+
+        return self._sign_and_submit(sender_idx, tx_json, "Payment")
+
     def test_account_set(self) -> TestResult:
         """Test AccountSet transaction"""
-        return self._submit_dummy_transaction("AccountSet")
+        account_idx = 2
+
+        tx_json = {
+            "TransactionType": "AccountSet",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": self._get_next_sequence(account_idx),
+            "Fee": "10",
+            "Domain": "6578616D706C652E636F6D"  # "example.com" in hex
+        }
+
+        return self._sign_and_submit(account_idx, tx_json, "AccountSet")
 
     def test_trust_set(self) -> TestResult:
         """Test TrustSet transaction"""
-        return self._submit_dummy_transaction("TrustSet")
+        account_idx = 3
+        issuer = GENESIS_WALLETS[0]
+
+        tx_json = {
+            "TransactionType": "TrustSet",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": self._get_next_sequence(account_idx),
+            "Fee": "10",
+            "LimitAmount": {
+                "currency": "USD",
+                "issuer": issuer["hex_id"],
+                "value": "1000"
+            }
+        }
+
+        return self._sign_and_submit(account_idx, tx_json, "TrustSet")
 
     def test_offer_create(self) -> TestResult:
         """Test OfferCreate transaction"""
-        return self._submit_dummy_transaction("OfferCreate")
+        account_idx = 4
+
+        tx_json = {
+            "TransactionType": "OfferCreate",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": self._get_next_sequence(account_idx),
+            "Fee": "10",
+            "TakerPays": "5000000",  # 5 CALL
+            "TakerGets": {
+                "currency": "USD",
+                "issuer": GENESIS_WALLETS[0]["hex_id"],
+                "value": "100"
+            }
+        }
+
+        return self._sign_and_submit(account_idx, tx_json, "OfferCreate")
 
     def test_offer_cancel(self) -> TestResult:
-        """Test OfferCancel transaction"""
-        return self._submit_dummy_transaction("OfferCancel")
+        """Test OfferCancel transaction - creates an offer first, then cancels it"""
+        account_idx = 4
+        seq = self._get_next_sequence(account_idx)
+
+        # First create an offer
+        create_tx = {
+            "TransactionType": "OfferCreate",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": seq,
+            "Fee": "10",
+            "TakerPays": "1000000",
+            "TakerGets": {
+                "currency": "EUR",
+                "issuer": GENESIS_WALLETS[0]["hex_id"],
+                "value": "50"
+            }
+        }
+
+        result = self._sign_and_submit(account_idx, create_tx, "OfferCreate")
+        if not result.success:
+            # If offer creation fails, report as OfferCancel failure
+            return TestResult("OfferCancel", False, f"Failed to create offer to cancel: {result.error}", result.response_time_ms)
+
+        # Now cancel the offer (use the sequence of the created offer)
+        cancel_tx = {
+            "TransactionType": "OfferCancel",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": self._get_next_sequence(account_idx),
+            "Fee": "10",
+            "OfferSequence": seq
+        }
+
+        return self._sign_and_submit(account_idx, cancel_tx, "OfferCancel")
 
     def test_signer_list_set(self) -> TestResult:
         """Test SignerListSet transaction"""
-        return self._submit_dummy_transaction("SignerListSet")
+        account_idx = 0
+        signer1 = GENESIS_WALLETS[1]
+        signer2 = GENESIS_WALLETS[2]
+
+        tx_json = {
+            "TransactionType": "SignerListSet",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": self._get_next_sequence(account_idx),
+            "Fee": "10",
+            "SignerQuorum": 2,
+            "Signers": [
+                {
+                    "Account": signer1["hex_id"],
+                    "SignerWeight": 1
+                },
+                {
+                    "Account": signer2["hex_id"],
+                    "SignerWeight": 1
+                }
+            ]
+        }
+
+        return self._sign_and_submit(account_idx, tx_json, "SignerListSet")
 
     def test_set_regular_key(self) -> TestResult:
         """Test SetRegularKey transaction"""
-        return self._submit_dummy_transaction("SetRegularKey")
+        account_idx = 1
+        regular_key = GENESIS_WALLETS[2]
+
+        tx_json = {
+            "TransactionType": "SetRegularKey",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": self._get_next_sequence(account_idx),
+            "Fee": "10",
+            "RegularKey": regular_key["hex_id"]
+        }
+
+        return self._sign_and_submit(account_idx, tx_json, "SetRegularKey")
 
     def test_nickname_set(self) -> TestResult:
         """Test NicknameSet transaction"""
-        return self._submit_dummy_transaction("NicknameSet")
+        account_idx = 2
+
+        tx_json = {
+            "TransactionType": "NicknameSet",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": self._get_next_sequence(account_idx),
+            "Fee": "10",
+            "Nickname": "74657374"  # "test" in hex
+        }
+
+        return self._sign_and_submit(account_idx, tx_json, "NicknameSet")
 
     def test_deposit_preauth(self) -> TestResult:
         """Test DepositPreauth transaction"""
-        return self._submit_dummy_transaction("DepositPreauth")
+        account_idx = 3
+        authorize = GENESIS_WALLETS[4]
+
+        tx_json = {
+            "TransactionType": "DepositPreauth",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": self._get_next_sequence(account_idx),
+            "Fee": "10",
+            "Authorize": authorize["hex_id"]
+        }
+
+        return self._sign_and_submit(account_idx, tx_json, "DepositPreauth")
 
     def test_issue_set(self) -> TestResult:
         """Test IssueSet transaction"""
-        return self._submit_dummy_transaction("IssueSet")
+        account_idx = 0
+
+        tx_json = {
+            "TransactionType": "IssueSet",
+            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Sequence": self._get_next_sequence(account_idx),
+            "Fee": "10",
+            "TotalSupply": {
+                "currency": "GOLD",
+                "issuer": GENESIS_WALLETS[account_idx]["hex_id"],
+                "value": "1000000"
+            }
+        }
+
+        return self._sign_and_submit(account_idx, tx_json, "IssueSet")
 
     def run_all_tests(self) -> List[TestResult]:
         """Run all transaction type tests"""
@@ -312,7 +469,7 @@ class TransactionTester:
 def run_stress_test(args) -> StressTestResults:
     """Run the stress test"""
     print(f"\n{'='*60}")
-    print("Call-Core Devnet Stress Test")
+    print("Call-Core Devnet Stress Test - Real Transaction Signing")
     print(f"{'='*60}")
     print(f"Target URL: {args.url}")
     print(f"Transactions: {args.count}")
@@ -331,6 +488,25 @@ def run_stress_test(args) -> StressTestResults:
 
     info = rpc.server_info()
     print(f"Node info: {json.dumps(info.get('result', {}), indent=2)}\n")
+
+    # Verify genesis accounts are funded
+    print("Verifying genesis accounts...")
+    all_accounts_funded = True
+    for wallet in GENESIS_WALLETS:
+        result = rpc.account_info(wallet["hex_id"])
+        if "error" in result:
+            print(f"  WARNING: {wallet['name']} - {result.get('error', 'Unknown error')}")
+            all_accounts_funded = False
+        else:
+            account_data = result.get("result", {}).get("account_data", {})
+            balance = account_data.get("Balance", "0")
+            print(f"  {wallet['name']}: {balance} drops")
+
+    if not all_accounts_funded:
+        print("\nWARNING: Some genesis accounts are not funded!")
+        print("Make sure the devnet is using the correct genesis.json")
+
+    print()
 
     # Get initial ledger state
     ledger = rpc.ledger_current()
@@ -450,7 +626,7 @@ def print_results(results: StressTestResults):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Call-Core Devnet Stress Test")
+    parser = argparse.ArgumentParser(description="Call-Core Devnet Stress Test with Real Transactions")
     parser.add_argument("--url", default="http://localhost:5005",
                         help="RPC endpoint URL (default: http://localhost:5005)")
     parser.add_argument("--count", type=int, default=100,
