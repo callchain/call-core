@@ -200,6 +200,80 @@ test_devnet() {
         python3 -m json.tool 2>/dev/null || cat
 }
 
+# Stress test the devnet
+stress_devnet() {
+    local stress_type="${1:-simple}"
+    local iterations="${2:-100}"
+    local threads="${3:-4}"
+
+    log_info "Running stress test (type: $stress_type)..."
+
+    # Check if Python is available
+    if ! command -v python3 &> /dev/null; then
+        log_error "Python3 is required for stress testing"
+        exit 1
+    fi
+
+    # Check if devnet is running
+    local node1_ok=false
+    local response=$(curl -s -X POST "http://localhost:5005/" \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
+    if echo "$response" | grep -q "success"; then
+        node1_ok=true
+    fi
+
+    if [ "$node1_ok" = false ]; then
+        log_error "Devnet is not running. Start it first with: $0 start"
+        exit 1
+    fi
+
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    case "$stress_type" in
+        simple)
+            log_info "Running simple stress test ($iterations iterations)..."
+            python3 "$script_dir/simple_stress_test.py" \
+                --url http://localhost:5005 \
+                --iterations "$iterations"
+            ;;
+        full|comprehensive)
+            log_info "Running comprehensive stress test ($iterations iterations, $threads threads)..."
+            python3 "$script_dir/stress_test.py" \
+                --url http://localhost:5005 \
+                --count "$iterations" \
+                --threads "$threads"
+            ;;
+        all)
+            log_info "Running all stress tests..."
+            echo ""
+            log_info "=== Simple Stress Test ==="
+            python3 "$script_dir/simple_stress_test.py" \
+                --url http://localhost:5005 \
+                --iterations "$iterations"
+            echo ""
+            log_info "=== Comprehensive Stress Test ==="
+            python3 "$script_dir/stress_test.py" \
+                --url http://localhost:5005 \
+                --count "$iterations" \
+                --threads "$threads"
+            ;;
+        *)
+            log_error "Unknown stress test type: $stress_type"
+            echo "Valid types: simple, full, all"
+            exit 1
+            ;;
+    esac
+
+    local exit_code=$?
+    if [ $exit_code -eq 0 ]; then
+        log_success "Stress test completed successfully"
+    else
+        log_error "Stress test failed with exit code $exit_code"
+    fi
+    return $exit_code
+}
+
 # Print usage
 print_usage() {
     echo "Call-core Dev Testnet Management"
@@ -214,14 +288,24 @@ print_usage() {
     echo "  logs        View logs (optionally specify node: node1, node2, node3)"
     echo "  clean       Remove all data and stop the devnet"
     echo "  test        Test the devnet connectivity"
+    echo "  stress      Run stress tests (simple|full|all) [iterations] [threads]"
     echo "  help        Show this help message"
     echo ""
+    echo "Stress Test Options:"
+    echo "  simple      Basic RPC endpoint testing (default)"
+    echo "  full        Comprehensive transaction type testing"
+    echo "  all         Run both simple and full tests"
+    echo ""
     echo "Examples:"
-    echo "  $0 start              # Start the devnet"
-    echo "  $0 logs               # View all logs"
-    echo "  $0 logs call-dev-node-1  # View logs for node 1"
-    echo "  $0 test               # Test connectivity"
-    echo "  $0 clean              # Clean up everything"
+    echo "  $0 start                      # Start the devnet"
+    echo "  $0 logs                       # View all logs"
+    echo "  $0 logs call-dev-node-1       # View logs for node 1"
+    echo "  $0 test                       # Test connectivity"
+    echo "  $0 stress                     # Run simple stress test (100 iterations)"
+    echo "  $0 stress simple 500          # Run 500 simple iterations"
+    echo "  $0 stress full 100 8          # Run full test: 100 iterations, 8 threads"
+    echo "  $0 stress all 50              # Run both tests with 50 iterations"
+    echo "  $0 clean                      # Clean up everything"
 }
 
 # Main command handler
@@ -246,6 +330,9 @@ case "${1:-start}" in
         ;;
     test)
         test_devnet
+        ;;
+    stress)
+        stress_devnet "$2" "$3" "$4"
         ;;
     help|-h|--help)
         print_usage
