@@ -135,7 +135,7 @@ class CallCoreRPC:
             "id": request_id
         }
         if params:
-            payload["params"] = [params]
+            payload["params"] = params
 
         data = json.dumps(payload).encode('utf-8')
         req = Request(
