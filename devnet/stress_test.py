@@ -209,10 +209,11 @@ class CallCoreRPC:
 class TransactionTester:
     """Tests all transaction types using genesis-funded accounts"""
 
-    def __init__(self, rpc: CallCoreRPC):
+    def __init__(self, rpc: CallCoreRPC, seq_offset: int = 0):
         self.rpc = rpc
         # Track sequence numbers per account to avoid conflicts
-        self.sequences = {i: 1 for i in range(len(GENESIS_WALLETS))}
+        # seq_offset ensures different workers use different sequence ranges
+        self.sequences = {i: 1 + seq_offset for i in range(len(GENESIS_WALLETS))}
         self.lock = threading.Lock()
 
     def _get_next_sequence(self, account_index: int) -> int:
@@ -487,10 +488,8 @@ def run_stress_test(args) -> StressTestResults:
         print("  ./devnet/devnet-up.sh start")
         sys.exit(1)
 
+    # Verify genesis accounts are funded (silently check node info)
     info = rpc.server_info()
-    print(f"Node info: {json.dumps(info.get('result', {}), indent=2)}\n")
-
-    # Verify genesis accounts are funded
     print("Verifying genesis accounts...")
     all_accounts_funded = True
     for wallet in GENESIS_WALLETS:
@@ -511,7 +510,8 @@ def run_stress_test(args) -> StressTestResults:
 
     # Get initial ledger state
     ledger = rpc.ledger_current()
-    print(f"Current ledger: {json.dumps(ledger.get('result', {}), indent=2)}\n")
+    ledger_index = ledger.get("result", {}).get("ledger_current_index", 0)
+    print(f"Current ledger index: {ledger_index}\n")
 
     results = StressTestResults()
 
@@ -526,7 +526,10 @@ def run_stress_test(args) -> StressTestResults:
     def worker(worker_id: int):
         """Worker thread function"""
         local_rpc = CallCoreRPC(args.url)
-        tester = TransactionTester(local_rpc)
+        # Pre-allocate sequence ranges per worker to avoid terDUPLICATE
+        # Worker 0: sequences 1-10000, Worker 1: 10001-20000, etc.
+        seq_offset = worker_id * 10000
+        tester = TransactionTester(local_rpc, seq_offset)
         local_results = []
 
         tx_per_worker = args.count // args.threads
