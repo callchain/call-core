@@ -24,12 +24,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY tests ./tests
 
-# Build the release binary with cache mounts for faster rebuilds
-# Caches cargo registry and target directory between builds
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/src/call-core/target \
-    cargo build --release --package node && \
-    cp /usr/src/call-core/target/release/calld /usr/local/bin/calld
+# Build the release binary
+RUN cargo build --release --package node
 
 # =============================================================================
 # Stage 2: Runtime
@@ -49,7 +45,7 @@ RUN useradd -m -u 1000 callchain
 RUN mkdir -p /data && chown -R callchain:callchain /data
 
 # Copy binary from builder
-COPY --from=builder /usr/local/bin/calld /usr/local/bin/
+COPY --from=builder /usr/src/call-core/target/release/calld /usr/local/bin/
 
 # Set working directory
 WORKDIR /data

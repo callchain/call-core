@@ -57,10 +57,6 @@ echo "Building Docker image..."
 echo "  Tag:      $TAG"
 echo "  Platform: $PLATFORM"
 echo "  Context:  $PROJECT_ROOT"
-echo "  BuildKit: enabled (for cache mounts)"
-
-# Enable BuildKit for cache mount support
-export DOCKER_BUILDKIT=1
 
 docker build $NO_CACHE \
     --platform "$PLATFORM" \
