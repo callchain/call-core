@@ -1,6 +1,7 @@
 /target
 /devnet-run/data/*
 /devnet-run/*.log
+/devnet/**/data/
 /data
 *.log
 nohup.out
