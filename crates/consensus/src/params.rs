@@ -27,8 +27,8 @@ impl Default for ConsensusParms {
             min_propose_time: 3,
             max_propose_time: 30,
             ledger_min_close_time: 2,  // 2 seconds minimum
-            ledger_max_close_time: 20, // 20 seconds maximum
-            ledger_max_tx_count: 5000, // Max 5000 transactions
+            ledger_max_close_time: 10, // 10 seconds maximum
+            ledger_max_tx_count: 2000, // Max 2000 transactions
             ledger_max_size: 10_000_000, // 10MB max ledger size
         }
     }
