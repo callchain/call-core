@@ -214,60 +214,79 @@ class TransactionTester:
         except Exception as e:
             return TestResult("Payment", False, str(e), (time.time() - start) * 1000)
 
+    def _submit_dummy_transaction(self, tx_type: str) -> TestResult:
+        """Submit a dummy transaction blob to test the RPC pipeline"""
+        import hashlib
+        import secrets
+
+        start = time.time()
+
+        # Create a dummy transaction blob (not a real serialized transaction)
+        # This tests the submission pipeline but will fail validation
+        tx_data = f"{tx_type}:{secrets.token_hex(16)}:{self._get_next_sequence()}"
+        tx_blob = hashlib.sha256(tx_data.encode()).hexdigest()
+
+        response = self.rpc.submit_transaction(tx_blob)
+        elapsed = (time.time() - start) * 1000
+
+        # Check for RPC errors (like Invalid params)
+        if "error" in response:
+            error = response["error"]
+            # If it's a JSON-RPC error, extract the message
+            if isinstance(error, dict) and "message" in error:
+                return TestResult(tx_type, False, error["message"], elapsed)
+            return TestResult(tx_type, False, str(error), elapsed)
+
+        result = response.get("result", {})
+        engine_result = result.get("engine_result", "")
+
+        # tesSUCCESS means transaction was applied
+        if engine_result == "tesSUCCESS":
+            return TestResult(tx_type, True, None, elapsed, result.get("tx_hash"))
+        # ter codes are retryable errors
+        elif engine_result.startswith("ter"):
+            return TestResult(tx_type, False, f"{engine_result}: retryable error", elapsed)
+        # Other codes are failures
+        elif engine_result:
+            return TestResult(tx_type, False, engine_result, elapsed)
+        else:
+            return TestResult(tx_type, False, "No engine_result in response", elapsed)
+
     def test_account_set(self) -> TestResult:
         """Test AccountSet transaction"""
-        start = time.time()
-        # Placeholder - would create actual AccountSet tx
-        time.sleep(0.001)  # Simulate processing
-        return TestResult("AccountSet", True, None, (time.time() - start) * 1000)
+        return self._submit_dummy_transaction("AccountSet")
 
     def test_trust_set(self) -> TestResult:
         """Test TrustSet transaction"""
-        start = time.time()
-        time.sleep(0.001)
-        return TestResult("TrustSet", True, None, (time.time() - start) * 1000)
+        return self._submit_dummy_transaction("TrustSet")
 
     def test_offer_create(self) -> TestResult:
         """Test OfferCreate transaction"""
-        start = time.time()
-        time.sleep(0.001)
-        return TestResult("OfferCreate", True, None, (time.time() - start) * 1000)
+        return self._submit_dummy_transaction("OfferCreate")
 
     def test_offer_cancel(self) -> TestResult:
         """Test OfferCancel transaction"""
-        start = time.time()
-        time.sleep(0.001)
-        return TestResult("OfferCancel", True, None, (time.time() - start) * 1000)
+        return self._submit_dummy_transaction("OfferCancel")
 
     def test_signer_list_set(self) -> TestResult:
         """Test SignerListSet transaction"""
-        start = time.time()
-        time.sleep(0.001)
-        return TestResult("SignerListSet", True, None, (time.time() - start) * 1000)
+        return self._submit_dummy_transaction("SignerListSet")
 
     def test_set_regular_key(self) -> TestResult:
         """Test SetRegularKey transaction"""
-        start = time.time()
-        time.sleep(0.001)
-        return TestResult("SetRegularKey", True, None, (time.time() - start) * 1000)
+        return self._submit_dummy_transaction("SetRegularKey")
 
     def test_nickname_set(self) -> TestResult:
         """Test NicknameSet transaction"""
-        start = time.time()
-        time.sleep(0.001)
-        return TestResult("NicknameSet", True, None, (time.time() - start) * 1000)
+        return self._submit_dummy_transaction("NicknameSet")
 
     def test_deposit_preauth(self) -> TestResult:
         """Test DepositPreauth transaction"""
-        start = time.time()
-        time.sleep(0.001)
-        return TestResult("DepositPreauth", True, None, (time.time() - start) * 1000)
+        return self._submit_dummy_transaction("DepositPreauth")
 
     def test_issue_set(self) -> TestResult:
         """Test IssueSet transaction"""
-        start = time.time()
-        time.sleep(0.001)
-        return TestResult("IssueSet", True, None, (time.time() - start) * 1000)
+        return self._submit_dummy_transaction("IssueSet")
 
     def run_all_tests(self) -> List[TestResult]:
         """Run all transaction type tests"""
