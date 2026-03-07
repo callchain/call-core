@@ -14,11 +14,12 @@ use crate::tx_engine::{ApplyContext, ApplyRules, TransactionEngine, TxResult};
 use crate::views::LedgerView;
 use primitives::{AccountID, UInt256};
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::Arc;
 
 /// Transaction with metadata for queue management
 #[derive(Debug, Clone)]
 pub struct QueuedTransaction {
-    pub transaction: Transaction,
+    pub transaction: Arc<Transaction>,
     pub received_time: u64,
     pub fee_level: u64,
     pub priority: u32,
@@ -46,7 +47,7 @@ impl Default for FeeParams {
 }
 
 impl QueuedTransaction {
-    pub fn new(transaction: Transaction, received_time: u64) -> Self {
+    pub fn new(transaction: Arc<Transaction>, received_time: u64) -> Self {
         let fee_level = Self::calculate_fee_level(&transaction);
         Self {
             transaction,
@@ -90,7 +91,7 @@ impl QueuedTransaction {
 
     /// Check if transaction meets minimum fee requirements
     pub fn meets_minimum_fee(&self, params: FeeParams) -> bool {
-        let min_fee = calculate_minimum_fee(&self.transaction, params);
+        let min_fee = calculate_minimum_fee(&*self.transaction, params);
         self.transaction.fee >= min_fee
     }
 
@@ -195,7 +196,7 @@ impl TransactionQueue {
     }
 
     /// Add a transaction to the queue
-    pub fn insert(&mut self, tx: Transaction) -> Result<(), TER> {
+    pub fn insert(&mut self, tx: Arc<Transaction>) -> Result<(), TER> {
         if self.size >= self.max_size {
             return Err(TER::terINSUFF_FEE);
         }
@@ -342,7 +343,7 @@ pub struct OpenLedger {
     /// Transaction queue
     queue: TransactionQueue,
     /// Applied transactions in order
-    applied: Vec<(Transaction, TxResult)>,
+    applied: Vec<(Arc<Transaction>, TxResult)>,
     /// Current ledger view
     view: Box<dyn LedgerView>,
     /// Transaction engine
@@ -366,7 +367,7 @@ impl OpenLedger {
     }
 
     /// Queue a transaction for inclusion
-    pub fn queue_transaction(&mut self, tx: Transaction) -> Result<(), TER> {
+    pub fn queue_transaction(&mut self, tx: Arc<Transaction>) -> Result<(), TER> {
         // Validate transaction can be queued
         self.validate_for_queue(&tx)?;
 
@@ -375,7 +376,7 @@ impl OpenLedger {
     }
 
     /// Apply transactions from queue to build candidate ledger
-    pub fn apply_queued_transactions(&mut self, max_count: usize) -> Vec<(Transaction, TxResult)> {
+    pub fn apply_queued_transactions(&mut self, max_count: usize) -> Vec<(Arc<Transaction>, TxResult)> {
         let mut results = Vec::new();
         let mut applied = 0;
 
@@ -398,8 +399,9 @@ impl OpenLedger {
             let result = self.engine.process(&mut ctx, &tx);
 
             if result.ter.is_success() {
-                results.push((tx.clone(), result.clone()));
-                self.applied.push((tx, result));
+                // Store result - Arc clone is cheap (just increments refcount)
+                self.applied.push((Arc::clone(&tx), result.clone()));
+                results.push((tx, result));
                 applied += 1;
             } else {
                 // Transaction failed - could re-queue or drop
@@ -431,12 +433,12 @@ impl OpenLedger {
     }
 
     /// Get transactions applied so far
-    pub fn applied_transactions(&self) -> &[(Transaction, TxResult)] {
+    pub fn applied_transactions(&self) -> &[(Arc<Transaction>, TxResult)] {
         &self.applied
     }
 
     /// Finalize the open ledger into a candidate
-    pub fn finalize(self) -> Vec<(Transaction, TxResult)> {
+    pub fn finalize(self) -> Vec<(Arc<Transaction>, TxResult)> {
         self.applied
     }
 
@@ -531,7 +533,7 @@ mod tests {
         );
         tx.set_hash(UInt256::new([4u8; 32]));
 
-        assert!(queue.insert(tx).is_ok());
+        assert!(queue.insert(Arc::new(tx)).is_ok());
         assert_eq!(queue.len(), 1);
     }
 
@@ -548,8 +550,9 @@ mod tests {
         tx.txn_signature = Some(vec![1, 2, 3]);
         tx.set_hash(UInt256::new([3u8; 32]));
 
-        assert!(queue.insert(tx.clone()).is_ok());
-        assert_eq!(queue.insert(tx), Err(TER::terDUPLICATE));
+        let tx_arc = Arc::new(tx);
+        assert!(queue.insert(Arc::clone(&tx_arc)).is_ok());
+        assert_eq!(queue.insert(tx_arc), Err(TER::terDUPLICATE));
     }
 
     #[test]
@@ -584,7 +587,7 @@ mod tests {
         tx_low.sequence = 1;
         tx_low.txn_signature = Some(vec![1]);
         tx_low.set_hash(UInt256::new([1u8; 32]));
-        queue.insert(tx_low).unwrap();
+        queue.insert(Arc::new(tx_low)).unwrap();
 
         // Insert high fee transaction
         let mut tx_high = Transaction::new_payment(
@@ -596,7 +599,7 @@ mod tests {
         tx_high.sequence = 2;
         tx_high.txn_signature = Some(vec![2]);
         tx_high.set_hash(UInt256::new([2u8; 32]));
-        queue.insert(tx_high).unwrap();
+        queue.insert(Arc::new(tx_high)).unwrap();
 
         // Pop should return highest fee first
         let next = queue.pop_highest_fee().unwrap();

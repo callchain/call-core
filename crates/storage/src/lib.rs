@@ -5,7 +5,7 @@ pub mod node_object;
 pub mod shard;
 
 pub use backend::{Backend, MemoryBackend, RocksDBBackend, WriteBatch, WriteOp, StorageError, cf};
-pub use database::Database;
+pub use database::{Database, AsyncDatabase};
 pub use historical::{
     HistoricalDataManager, HistoricalLedger, HistoricalTransaction,
     PaginationInfo, QueryParams

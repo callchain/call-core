@@ -3,6 +3,68 @@ use crate::node_object::{NodeObject, NodeObjectType};
 use primitives::UInt256;
 use std::sync::{Arc, Mutex};
 
+/// Async handle for database operations
+///
+/// This wrapper provides async methods that run database operations
+/// in a blocking thread pool to avoid blocking the async runtime.
+#[derive(Clone)]
+pub struct AsyncDatabase {
+    inner: Database,
+}
+
+impl AsyncDatabase {
+    /// Create a new async database wrapper
+    pub fn new(database: Database) -> Self {
+        Self { inner: database }
+    }
+
+    /// Fetch a node by its hash (async)
+    pub async fn fetch_node(&self, hash: UInt256) -> Option<NodeObject> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || db.fetch_node(&hash))
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Store a single node object (async)
+    pub async fn store_node(&self, obj: NodeObject) {
+        let db = self.inner.clone();
+        let _ = tokio::task::spawn_blocking(move || db.store_node(obj)).await;
+    }
+
+    /// Execute a batch of write operations (async)
+    ///
+    /// This is the preferred method for bulk writes as it minimizes
+    /// thread pool usage by batching operations.
+    pub async fn write_batch(&self, batch: WriteBatch) {
+        let db = self.inner.clone();
+        let _ = tokio::task::spawn_blocking(move || db.write_batch(batch)).await;
+    }
+
+    /// Check if a node exists (async)
+    pub async fn node_exists(&self, hash: UInt256) -> bool {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || db.node_exists(&hash))
+            .await
+            .unwrap_or(false)
+    }
+
+    /// Store a ledger header (async)
+    pub async fn store_ledger(&self, hash: UInt256, data: Vec<u8>) {
+        let db = self.inner.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            db.store_node_data(NodeObjectType::Ledger, hash, data);
+        })
+        .await;
+    }
+
+    /// Get the inner database for sync operations
+    pub fn inner(&self) -> &Database {
+        &self.inner
+    }
+}
+
 /// Database provides a high-level interface for storing and retrieving
 /// SHAMap nodes in a key-value database.
 ///

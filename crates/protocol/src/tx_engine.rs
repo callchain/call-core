@@ -12,6 +12,7 @@ use crate::transactions::{TER, Transaction, TxType};
 use crate::views::LedgerView;
 use crypto::{PublicKey, KeyType};
 use primitives::{AccountID, UInt256};
+use rayon::prelude::*;
 
 /// Rules for transaction processing
 #[derive(Debug, Clone)]
@@ -996,6 +997,15 @@ impl TransactionEngine {
         });
 
         TER::tesSUCCESS
+    }
+
+    /// Batch verify transaction signatures in parallel using Rayon
+    /// Returns a vector of (transaction_index, is_valid) tuples
+    pub fn verify_signatures_parallel(&self, txs: &[&Transaction]) -> Vec<(usize, bool)> {
+        txs.par_iter()
+            .enumerate()
+            .map(|(idx, tx)| (idx, self.verify_transaction_signature(tx)))
+            .collect()
     }
 
     /// Verify transaction signature cryptographically

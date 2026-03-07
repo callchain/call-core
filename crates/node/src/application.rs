@@ -1317,8 +1317,13 @@ impl Application {
 
         self.current_ledger_hash = new_ledger_info.hash;
 
-        // Persist the ledger state to the database
-        self.ledger_state.persist_to_database(&self.database);
+        // Persist the ledger state to the database asynchronously
+        // This avoids blocking the async runtime during I/O
+        let ledger_state = self.ledger_state.clone();
+        let database = self.database.clone();
+        tokio::task::spawn_blocking(move || {
+            ledger_state.persist_to_database(&database);
+        });
 
         // Persist node state (ledger hash and sequence)
         self.save_node_state();
@@ -1762,10 +1767,10 @@ impl Application {
         // Add the transaction to the queue for inclusion in the next consensus round
         debug!("Adding transaction to open ledger");
 
-        // Clone the transaction and add to queue
-        let tx_clone = tx.clone();
-        let tx_size = std::mem::size_of_val(&tx_clone);
-        match self.tx_queue.insert(tx_clone) {
+        // Wrap transaction in Arc and add to queue
+        let tx_arc = std::sync::Arc::new(tx.clone());
+        let tx_size = std::mem::size_of_val(&tx_arc);
+        match self.tx_queue.insert(tx_arc) {
             Ok(_) => {
                 debug!("Transaction added to queue successfully");
                 // Also update consensus transaction count so ledger will close
@@ -1885,8 +1890,12 @@ impl Application {
         let ledger_object = NodeObject::new(NodeObjectType::Ledger, ledger_hash, ledger_data);
         self.database.store_node(ledger_object);
 
-        // 4. Persist ledger state (SHAMap contents)
-        self.ledger_state.persist_to_database(&self.database);
+        // 4. Persist ledger state (SHAMap contents) asynchronously
+        let ledger_state = self.ledger_state.clone();
+        let database = self.database.clone();
+        tokio::task::spawn_blocking(move || {
+            ledger_state.persist_to_database(&database);
+        });
 
         info!("Persisted ledger {} to database", self.current_ledger_seq);
 
