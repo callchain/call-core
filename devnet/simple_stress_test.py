@@ -88,12 +88,13 @@ def main():
     print("\nGetting server info...")
     info = rpc_call(args.url, "server_info")
     if "error" not in info:
-        # Handle both nested and flat response formats
-        result = info.get("result", info)
-        print(f"  Server State: {result.get('server_state', result.get('state', 'N/A'))}")
-        print(f"  Ledger Seq: {result.get('ledger_seq', result.get('ledger_index', 'N/A'))}")
-        print(f"  Complete Ledgers: {result.get('complete_ledgers', 'N/A')}")
-        print(f"  Peers: {result.get('peers', result.get('peer_count', 'N/A'))}")
+        # Response format: {"result": {"info": {...}}}
+        result = info.get("result", {})
+        info_data = result.get("info", {})
+        print(f"  Server State: {info_data.get('server_state', 'N/A')}")
+        print(f"  Ledger Seq: {info_data.get('ledger_seq', 'N/A')}")
+        print(f"  Complete Ledgers: {info_data.get('complete_ledgers', 'N/A')}")
+        print(f"  Peers: {info_data.get('peers', 'N/A')}")
     else:
         print(f"  ERROR: {info.get('error', 'Unknown error')}")
 
@@ -101,9 +102,10 @@ def main():
     print("\nGetting current ledger...")
     ledger = rpc_call(args.url, "ledger_current")
     if "error" not in ledger:
-        # Handle both nested and flat response formats
-        result = ledger.get("result", ledger)
-        print(f"  Ledger Index: {result.get('ledger_index', result.get('ledger_seq', 'N/A'))}")
+        # Response format: {"result": {"ledger_current_index": N, "status": "success"}}
+        result = ledger.get("result", {})
+        ledger_index = result.get('ledger_current_index', result.get('ledger_index', 'N/A'))
+        print(f"  Ledger Index: {ledger_index}")
         ledger_hash = result.get('ledger_hash', 'N/A')
         if ledger_hash != 'N/A' and len(str(ledger_hash)) > 16:
             print(f"  Ledger Hash: {str(ledger_hash)[:16]}...")
