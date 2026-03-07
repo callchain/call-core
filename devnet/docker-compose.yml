@@ -14,7 +14,8 @@ services:
       - "51235:51235" # P2P
     command: ["--config", "/app/config.toml", "start"]
     networks:
-      - call-devnet
+      call-devnet:
+        ipv4_address: 172.21.0.2
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5005/", "-H", "Content-Type: application/json", "-d", '{"jsonrpc":"2.0","method":"ping","id":1}']
@@ -36,7 +37,8 @@ services:
       - "51236:51236" # P2P
     command: ["--config", "/app/config.toml", "start"]
     networks:
-      - call-devnet
+      call-devnet:
+        ipv4_address: 172.21.0.3
     restart: unless-stopped
     depends_on:
       - call-dev-node-1
@@ -60,7 +62,8 @@ services:
       - "51237:51237" # P2P
     command: ["--config", "/app/config.toml", "start"]
     networks:
-      - call-devnet
+      call-devnet:
+        ipv4_address: 172.21.0.4
     restart: unless-stopped
     depends_on:
       - call-dev-node-1
@@ -75,3 +78,7 @@ networks:
   call-devnet:
     driver: bridge
     name: call-devnet
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+          gateway: 172.21.0.1

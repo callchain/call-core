@@ -9,9 +9,10 @@ node_name = "call-dev-node-2"
 listen_address = "0.0.0.0:51236"
 
 # Bootstrap peers - connect to other nodes in the devnet
+# Using Docker network IPs (172.21.0.x subnet)
 peers = [
-    "call-dev-node-1:51235",
-    "call-dev-node-3:51235",
+    "172.21.0.2:51235",
+    "172.21.0.4:51237",
 ]
 
 # Data directory for blockchain storage

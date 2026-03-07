@@ -1155,16 +1155,26 @@ impl Application {
             }
 
             {
-                let mut app = app_handle.write().await;
-                if app.state == NodeState::Stopping {
-                    break;
+                // Process consensus - acquire lock briefly
+                {
+                    let mut app = app_handle.write().await;
+                    if app.state == NodeState::Stopping {
+                        break;
+                    }
+                    app.process_consensus().await?;
                 }
 
-                // Process consensus
-                app.process_consensus().await?;
+                // Yield to allow RPC reads to proceed
+                tokio::task::yield_now().await;
 
                 // Process network messages
-                app.process_network().await?;
+                {
+                    let mut app = app_handle.write().await;
+                    app.process_network().await?;
+                }
+
+                // Yield again to allow other tasks to run
+                tokio::task::yield_now().await;
             }
         }
 
