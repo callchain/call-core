@@ -87,22 +87,28 @@ def main():
     # Get server info
     print("\nGetting server info...")
     info = rpc_call(args.url, "server_info")
-    if "result" in info:
-        result = info["result"]
-        print(f"  Server State: {result.get('server_state', 'N/A')}")
-        print(f"  Ledger Seq: {result.get('ledger_seq', 'N/A')}")
+    if "error" not in info:
+        # Handle both nested and flat response formats
+        result = info.get("result", info)
+        print(f"  Server State: {result.get('server_state', result.get('state', 'N/A'))}")
+        print(f"  Ledger Seq: {result.get('ledger_seq', result.get('ledger_index', 'N/A'))}")
         print(f"  Complete Ledgers: {result.get('complete_ledgers', 'N/A')}")
-        print(f"  Peers: {result.get('peers', 'N/A')}")
+        print(f"  Peers: {result.get('peers', result.get('peer_count', 'N/A'))}")
     else:
         print(f"  ERROR: {info.get('error', 'Unknown error')}")
 
     # Get current ledger
     print("\nGetting current ledger...")
     ledger = rpc_call(args.url, "ledger_current")
-    if "result" in ledger:
-        result = ledger["result"]
-        print(f"  Ledger Index: {result.get('ledger_index', 'N/A')}")
-        print(f"  Ledger Hash: {result.get('ledger_hash', 'N/A')[:16]}...")
+    if "error" not in ledger:
+        # Handle both nested and flat response formats
+        result = ledger.get("result", ledger)
+        print(f"  Ledger Index: {result.get('ledger_index', result.get('ledger_seq', 'N/A'))}")
+        ledger_hash = result.get('ledger_hash', 'N/A')
+        if ledger_hash != 'N/A' and len(str(ledger_hash)) > 16:
+            print(f"  Ledger Hash: {str(ledger_hash)[:16]}...")
+        else:
+            print(f"  Ledger Hash: {ledger_hash}")
     else:
         print(f"  ERROR: {ledger.get('error', 'Unknown error')}")
 
@@ -184,11 +190,13 @@ def main():
 
     # Test ledger_accept if available
     print("\nTesting ledger_accept (manual ledger close)...")
-    result = rpc_call(args.url, "ledger_accept")
-    if "error" in result:
-        print(f"  ledger_accept: Not available or failed ({result.get('error', 'Unknown')})")
+    accept_result = rpc_call(args.url, "ledger_accept")
+    if "error" not in accept_result:
+        result = accept_result.get("result", accept_result)
+        ledger_idx = result.get('ledger_current_index', result.get('ledger_index', 'N/A'))
+        print(f"  ledger_accept: success (ledger: {ledger_idx})")
     else:
-        print(f"  ledger_accept: {result.get('result', 'N/A')}")
+        print(f"  ledger_accept: Not available or failed ({accept_result.get('error', 'Unknown')})")
 
     print(f"\n{'='*60}")
 
