@@ -41,6 +41,14 @@ class TestResult:
     response_time_ms: float = 0.0
     tx_hash: Optional[str] = None
 
+    def __post_init__(self):
+        # Ensure error is always a string (not a dict)
+        if self.error is not None and not isinstance(self.error, str):
+            if isinstance(self.error, dict):
+                self.error = str(self.error)
+            else:
+                self.error = str(self.error)
+
 
 @dataclass
 class StressTestResults:
