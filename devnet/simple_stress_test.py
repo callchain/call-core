@@ -91,8 +91,13 @@ def main():
         # Response format: {"result": {"info": {...}}}
         result = info.get("result", {})
         info_data = result.get("info", {})
+
+        # Get ledger seq from validated_ledger.seq
+        validated_ledger = info_data.get('validated_ledger', {})
+        ledger_seq = validated_ledger.get('seq', 'N/A')
+
         print(f"  Server State: {info_data.get('server_state', 'N/A')}")
-        print(f"  Ledger Seq: {info_data.get('ledger_seq', 'N/A')}")
+        print(f"  Ledger Seq: {ledger_seq}")
         print(f"  Complete Ledgers: {info_data.get('complete_ledgers', 'N/A')}")
         print(f"  Peers: {info_data.get('peers', 'N/A')}")
     else:
@@ -106,11 +111,12 @@ def main():
         result = ledger.get("result", {})
         ledger_index = result.get('ledger_current_index', result.get('ledger_index', 'N/A'))
         print(f"  Ledger Index: {ledger_index}")
-        ledger_hash = result.get('ledger_hash', 'N/A')
-        if ledger_hash != 'N/A' and len(str(ledger_hash)) > 16:
-            print(f"  Ledger Hash: {str(ledger_hash)[:16]}...")
+        # ledger_current doesn't return hash, use ledger_hash from server_info's validated_ledger
+        validated_hash = info.get("result", {}).get("info", {}).get("validated_ledger", {}).get("hash", "N/A")
+        if validated_hash and validated_hash != '0000000000000000000000000000000000000000000000000000000000000000':
+            print(f"  Ledger Hash: {validated_hash[:16]}...")
         else:
-            print(f"  Ledger Hash: {ledger_hash}")
+            print(f"  Ledger Hash: (not validated yet)")
     else:
         print(f"  ERROR: {ledger.get('error', 'Unknown error')}")
 
