@@ -33,40 +33,41 @@ from urllib.error import URLError
 
 
 # Genesis wallet information - funded accounts with known seeds
+# These match the default_devnet() genesis configuration
 GENESIS_WALLETS = [
     {
         "name": "Genesis Account 1",
-        "seed": "snTwCbEYk7ui94RuHn8SfWjs2jd5Y",
-        "address": "cagpMvZf6Z8GrnAPZdQgXrCqBvCFmQYfJi",
-        "hex_id": "3e39fcc137a272773c1e63fb52db14c5402ed192",
+        "seed": "ssyB7KxAvfRwQ6mseEjt3iY1qeqMC",
+        "address": "cGmJBrEfFssWuas4kCoHTX5r6aMEf6QHhy",
+        "hex_id": "a879e08e40e5ac20e33aae3ff50e9e249c382f40",
         "balance": "100000000000"
     },
     {
         "name": "Genesis Account 2",
-        "seed": "snMJdHz8J4hqCAUFctxft3fYLrXHR",
-        "address": "cGMbLyeUsUpjTtMFcCWZDVA4hdMXpjvPi3",
-        "hex_id": "a86ee011ed6d1aa7479d0c83cedf844b0b9805b6",
+        "seed": "snTHcoLdd2vwrCmNunkMZRhbfLuLs",
+        "address": "c3K3xXhvsWBnP3TitQfeg2ihAuaYybvtc7",
+        "hex_id": "14e98c7547295994b1a2d756e3f1a7a20c19c9d6",
         "balance": "50000000000"
     },
     {
         "name": "Genesis Account 3",
-        "seed": "ssurbhFSvTy6iq3SqkwTE3PFVUc6o",
-        "address": "cadFKa9yk1Fv4PBj2DeZfYW48APXj4L8g",
-        "hex_id": "0110cfe0f005c09fff426f38477ae2f6e01d958e",
+        "seed": "shCQseDN6PMeeBK31bCjhQqYY4LrG",
+        "address": "cHSFoKcGXFZdbB7EKmWQMTUJbr66dwfMR1",
+        "hex_id": "afd81b1e5dece82d4d7fd8e1f81f0fdc902362c8",
         "balance": "25000000000"
     },
     {
         "name": "Genesis Account 4",
-        "seed": "ssiRK6eJy1UKup76Cb4tXf6H37ZXy",
-        "address": "cLxud1QujAfeYszuY6DBwBhGE4fQ3GhKS5",
-        "hex_id": "dafd34b1e33a5d9aabb14cb49bafa974485142f9",
+        "seed": "shiWcE5Y2DJqZ2X2oLCrqYmovqz45",
+        "address": "cKKeufyrSZymFeGmtF1Vhi11eCSf2i6MhR",
+        "hex_id": "c488bc92754a9238aabf29da8507cb3c7ac73da7",
         "balance": "10000000000"
     },
     {
         "name": "Genesis Account 5",
-        "seed": "shNsiWGT6PqQKQGHYvtEuiaQWkjtf",
-        "address": "cGUQS4suRWMibEGCz46xxMVw45yB3h5Pio",
-        "hex_id": "a6b206dc858a38f5213336b49173a25cf2118a8d",
+        "seed": "ss1nurfhbpEnnZkDai6GTYdzT7Jqb",
+        "address": "cUUsn5u9qPq7MiMiEDwdjMPsHHKyaesHPH",
+        "hex_id": "29005adf4b7eeed4beb8cc224cc94f19a57c526b",
         "balance": "5000000000"
     }
 ]

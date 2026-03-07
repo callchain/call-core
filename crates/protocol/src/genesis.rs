@@ -369,12 +369,13 @@ impl GenesisConfig {
     }
 
     /// Get the default genesis config (for testing)
+    /// These accounts have known seeds for transaction signing in stress tests
     pub fn default_devnet() -> Self {
         let mut allocations = HashMap::new();
 
-        // Add default devnet accounts
+        // Genesis Account 1: ssyB7KxAvfRwQ6mseEjt3iY1qeqMC
         allocations.insert(
-            "cw6htsw3GuePRosi6viQfUrCiMcqn5L2R2".to_string(),
+            "cGmJBrEfFssWuas4kCoHTX5r6aMEf6QHhy".to_string(),
             GenesisAccount {
                 balance: "100000000000".to_string(), // 100,000 CALL
                 sequence: 1,
@@ -383,10 +384,44 @@ impl GenesisConfig {
             },
         );
 
+        // Genesis Account 2: snTHcoLdd2vwrCmNunkMZRhbfLuLs
         allocations.insert(
-            "cEhww3EorJ51Qt5q8GPphRq6e6v6c8SrPN".to_string(),
+            "c3K3xXhvsWBnP3TitQfeg2ihAuaYybvtc7".to_string(),
             GenesisAccount {
                 balance: "50000000000".to_string(), // 50,000 CALL
+                sequence: 1,
+                flags: 0,
+                regular_key: None,
+            },
+        );
+
+        // Genesis Account 3: shCQseDN6PMeeBK31bCjhQqYY4LrG
+        allocations.insert(
+            "cHSFoKcGXFZdbB7EKmWQMTUJbr66dwfMR1".to_string(),
+            GenesisAccount {
+                balance: "25000000000".to_string(), // 25,000 CALL
+                sequence: 1,
+                flags: 0,
+                regular_key: None,
+            },
+        );
+
+        // Genesis Account 4: shiWcE5Y2DJqZ2X2oLCrqYmovqz45
+        allocations.insert(
+            "cKKeufyrSZymFeGmtF1Vhi11eCSf2i6MhR".to_string(),
+            GenesisAccount {
+                balance: "10000000000".to_string(), // 10,000 CALL
+                sequence: 1,
+                flags: 0,
+                regular_key: None,
+            },
+        );
+
+        // Genesis Account 5: ss1nurfhbpEnnZkDai6GTYdzT7Jqb
+        allocations.insert(
+            "cUUsn5u9qPq7MiMiEDwdjMPsHHKyaesHPH".to_string(),
+            GenesisAccount {
+                balance: "5000000000".to_string(), // 5,000 CALL
                 sequence: 1,
                 flags: 0,
                 regular_key: None,
