@@ -21,15 +21,15 @@ impl Default for ConsensusParms {
         Self {
             ledger_min_consensus: 2,
             ledger_max_consensus: 50,
-            ledger_min_consensus_pct: 80,
-            validation_quorum: 28,
-            amendment_quorum: 28,
-            min_propose_time: 3,
-            max_propose_time: 30,
-            ledger_min_close_time: 2,  // 2 seconds minimum
-            ledger_max_close_time: 10, // 10 seconds maximum
-            ledger_max_tx_count: 2000, // Max 2000 transactions
-            ledger_max_size: 10_000_000, // 10MB max ledger size
+            ledger_min_consensus_pct: 66,  // 66% for fast 3-node devnet consensus
+            validation_quorum: 2,          // Only need 2 validators for devnet
+            amendment_quorum: 2,
+            min_propose_time: 1,           // Propose solutions faster
+            max_propose_time: 10,          // Cap proposal time
+            ledger_min_close_time: 1,      // 1 second minimum - open ledgers faster
+            ledger_max_close_time: 5,      // 5 seconds maximum - force close sooner
+            ledger_max_tx_count: 10000,    // Max 10000 transactions - higher throughput
+            ledger_max_size: 50_000_000,   // 50MB max ledger size - larger ledgers
         }
     }
 }
