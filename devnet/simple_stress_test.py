@@ -92,14 +92,32 @@ def main():
         result = info.get("result", {})
         info_data = result.get("info", {})
 
-        # Get ledger seq from validated_ledger.seq
+        # Get ledger seq from validated_ledger.seq (or show as "not validated")
         validated_ledger = info_data.get('validated_ledger', {})
-        ledger_seq = validated_ledger.get('seq', 'N/A')
+        ledger_seq = validated_ledger.get('seq', 0)
+        if ledger_seq == 0:
+            ledger_seq_str = "0 (not validated)"
+        else:
+            ledger_seq_str = str(ledger_seq)
+
+        # Format complete_ledgers - show meaningful message for "empty"
+        complete_ledgers = info_data.get('complete_ledgers', 'N/A')
+        if complete_ledgers == 'empty':
+            complete_ledgers_str = "none (not validated)"
+        else:
+            complete_ledgers_str = complete_ledgers
+
+        # Format peers - show 0 as "0 (no peers)"
+        peers = info_data.get('peers', 0)
+        if peers == 0:
+            peers_str = "0 (no peers)"
+        else:
+            peers_str = str(peers)
 
         print(f"  Server State: {info_data.get('server_state', 'N/A')}")
-        print(f"  Ledger Seq: {ledger_seq}")
-        print(f"  Complete Ledgers: {info_data.get('complete_ledgers', 'N/A')}")
-        print(f"  Peers: {info_data.get('peers', 'N/A')}")
+        print(f"  Ledger Seq: {ledger_seq_str}")
+        print(f"  Complete Ledgers: {complete_ledgers_str}")
+        print(f"  Peers: {peers_str}")
     else:
         print(f"  ERROR: {info.get('error', 'Unknown error')}")
 
