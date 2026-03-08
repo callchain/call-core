@@ -28,6 +28,7 @@ import threading
 import concurrent.futures
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable
+import hashlib
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 
@@ -95,7 +96,7 @@ class StressTestResults:
     errors_by_type: Dict[str, List[str]] = field(default_factory=dict)
     results_by_type: Dict[str, List[TestResult]] = field(default_factory=dict)
     total_time_seconds: float = 0.0
-    sent_tx_hashes: List[str] = field(default_factory=list)
+    sent_tx_hashes: Dict[str, str] = field(default_factory=dict)
     duplicate_hashes: List[str] = field(default_factory=list)
 
     def add_result(self, result: TestResult):
@@ -247,9 +248,9 @@ class TransactionTester:
 
         if show_debug:
             # Compute hash of tx_blob for comparison
-            import hashlib
             blob_hash = hashlib.sha256(tx_blob.encode()).hexdigest()[:16]
             print(f"  [DEBUG] tx_blob hash (sha256): {blob_hash}")
+            print(f"  [DEBUG] tx_blob (first 100 chars): {tx_blob[:100]}...")
 
         # Submit the transaction
         response = self.rpc.submit_transaction(tx_blob)
@@ -279,11 +280,18 @@ class TransactionTester:
         # Log transaction hash for debugging
         if tx_hash and self.results:
             with self.lock:
+                # Store hash with account and sequence for debugging
+                hash_entry = f"{tx_hash} ({account[:12]}... seq={seq})"
                 if tx_hash in self.results.sent_tx_hashes:
                     # This is a duplicate hash!
-                    self.results.duplicate_hashes.append(tx_hash)
+                    self.results.duplicate_hashes.append(hash_entry)
+                    print(f"    [DUPLICATE HASH DETECTED] {tx_hash}")
+                    print(f"      Previous: {self.results.sent_tx_hashes[tx_hash]}")
+                    print(f"      Current:  {hash_entry}")
                 else:
-                    self.results.sent_tx_hashes.append(tx_hash)
+                    self.results.sent_tx_hashes[tx_hash] = hash_entry
+                    # Print every transaction hash for debugging
+                    print(f"    [TX HASH] {tx_hash} ({account[:12]}... seq={seq})")
 
         if engine_result == "tesSUCCESS":
             return TestResult(tx_type, True, None, elapsed, tx_hash)
@@ -444,7 +452,6 @@ class TransactionTester:
 
         # Nickname is a Hash256 field - must be 32 bytes (64 hex chars)
         # Using SHA256 hash of "test" to get a proper 32-byte value
-        import hashlib
         nickname_hash = hashlib.sha256(b"test").hexdigest()
 
         tx_json = {
@@ -671,6 +678,26 @@ def print_results(results: StressTestResults):
             print(f"    - {h}")
         if len(results.duplicate_hashes) > 10:
             print(f"    ... and {len(results.duplicate_hashes) - 10} more")
+
+    # Show all transaction hashes for debugging
+    print(f"\n  All Transaction Hashes (total: {len(results.sent_tx_hashes)}):")
+    print(f"  {'-'*70}")
+    print(f"  {'Hash':<64} {'Account':<18} {'Seq':>6}")
+    print(f"  {'-'*70}")
+    for i, (tx_hash, entry) in enumerate(results.sent_tx_hashes.items()):
+        # Parse entry format: "hash (account seq=123)"
+        if '(' in entry and '...' in entry:
+            parts = entry.rsplit('...', 1)[1].rsplit(' seq=', 1)
+            if len(parts) == 2:
+                account, seq = parts[0].strip(), parts[1].strip(')')
+            else:
+                account, seq = "unknown", "?"
+        else:
+            account, seq = "unknown", "?"
+        print(f"  {tx_hash:<64} {account:<18} {seq:>6}")
+        if i >= 49 and len(results.sent_tx_hashes) > 50:
+            print(f"    ... and {len(results.sent_tx_hashes) - 50} more (showing first 50)")
+            break
 
     print(f"\n{'='*60}")
 
