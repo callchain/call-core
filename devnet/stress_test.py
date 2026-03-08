@@ -95,6 +95,8 @@ class StressTestResults:
     errors_by_type: Dict[str, List[str]] = field(default_factory=dict)
     results_by_type: Dict[str, List[TestResult]] = field(default_factory=dict)
     total_time_seconds: float = 0.0
+    sent_tx_hashes: List[str] = field(default_factory=list)
+    duplicate_hashes: List[str] = field(default_factory=list)
 
     def add_result(self, result: TestResult):
         self.total_transactions += 1
@@ -204,12 +206,13 @@ class CallCoreRPC:
 class TransactionTester:
     """Tests all transaction types using genesis-funded accounts"""
 
-    def __init__(self, rpc: CallCoreRPC, seq_offset: int = 0):
+    def __init__(self, rpc: CallCoreRPC, seq_offset: int = 0, results: StressTestResults = None):
         self.rpc = rpc
         # Track sequence numbers per account to avoid conflicts
         # seq_offset ensures different workers use different sequence ranges
         self.sequences = {i: 1 + seq_offset for i in range(len(GENESIS_WALLETS))}
         self.lock = threading.Lock()
+        self.results = results
 
     def _get_next_sequence(self, account_index: int) -> int:
         """Get the next sequence number for an account"""
@@ -223,11 +226,30 @@ class TransactionTester:
         start = time.time()
         wallet = GENESIS_WALLETS[account_index]
 
+        # Get sequence before signing for debug
+        seq = tx_json.get("Sequence", "unknown")
+        account = tx_json.get("Account", "unknown")
+
+        # Create a unique transaction identifier for debugging
+        tx_id = f"{account[:15]}..._seq{seq}"
+
+        # Show first few transactions for debugging
+        show_debug = seq <= 3 or (isinstance(seq, int) and seq >= 10000 and seq <= 10002)
+        if show_debug:
+            print(f"  [DEBUG] Signing {tx_type} {tx_id}: {json.dumps(tx_json)}")
+
         # Sign the transaction
         tx_blob = self.rpc.sign(wallet["seed"], tx_json)
         if not tx_blob:
             elapsed = (time.time() - start) * 1000
+            print(f"  [SIGN FAILED] {tx_type} {tx_id}")
             return TestResult(tx_type, False, "Failed to sign transaction", elapsed)
+
+        if show_debug:
+            # Compute hash of tx_blob for comparison
+            import hashlib
+            blob_hash = hashlib.sha256(tx_blob.encode()).hexdigest()[:16]
+            print(f"  [DEBUG] tx_blob hash (sha256): {blob_hash}")
 
         # Submit the transaction
         response = self.rpc.submit_transaction(tx_blob)
@@ -235,21 +257,42 @@ class TransactionTester:
 
         if "error" in response:
             error = response["error"]
+            print(f"  [RPC ERROR] {tx_type} {tx_id}: {error}")
             if isinstance(error, dict) and "message" in error:
                 return TestResult(tx_type, False, error["message"], elapsed)
             return TestResult(tx_type, False, str(error), elapsed)
 
         result = response.get("result", {})
         engine_result = result.get("engine_result", "")
+        tx_hash = result.get("tx_hash")
+
+        # Log every transaction with its result
+        if engine_result == "tesSUCCESS":
+            print(f"  [SUCCESS] {tx_type} {tx_id} -> {engine_result}")
+        elif "terDUPLICATE" in engine_result:
+            print(f"  [DUPLICATE] {tx_type} {tx_id} -> {engine_result}")
+        elif engine_result.startswith("ter"):
+            print(f"  [RETRY] {tx_type} {tx_id} -> {engine_result}")
+        else:
+            print(f"  [FAILED] {tx_type} {tx_id} -> {engine_result}")
+
+        # Log transaction hash for debugging
+        if tx_hash and self.results:
+            with self.lock:
+                if tx_hash in self.results.sent_tx_hashes:
+                    # This is a duplicate hash!
+                    self.results.duplicate_hashes.append(tx_hash)
+                else:
+                    self.results.sent_tx_hashes.append(tx_hash)
 
         if engine_result == "tesSUCCESS":
-            return TestResult(tx_type, True, None, elapsed, result.get("tx_hash"))
+            return TestResult(tx_type, True, None, elapsed, tx_hash)
         elif engine_result.startswith("ter"):
-            return TestResult(tx_type, False, f"{engine_result}: retryable error", elapsed)
+            return TestResult(tx_type, False, f"{engine_result}: retryable error", elapsed, tx_hash)
         elif engine_result:
-            return TestResult(tx_type, False, engine_result, elapsed)
+            return TestResult(tx_type, False, engine_result, elapsed, tx_hash)
         else:
-            return TestResult(tx_type, False, "No engine_result in response", elapsed)
+            return TestResult(tx_type, False, "No engine_result in response", elapsed, tx_hash)
 
     def test_payment(self) -> TestResult:
         """Test Payment transaction"""
@@ -523,7 +566,7 @@ def run_stress_test(args) -> StressTestResults:
         # Pre-allocate sequence ranges per worker to avoid terDUPLICATE
         # Worker 0: sequences 1-10000, Worker 1: 10001-20000, etc.
         seq_offset = worker_id * 10000
-        tester = TransactionTester(local_rpc, seq_offset)
+        tester = TransactionTester(local_rpc, seq_offset, results)
         local_results = []
 
         tx_per_worker = args.count // args.threads
@@ -612,6 +655,18 @@ def print_results(results: StressTestResults):
         print(f"  P50: {p50:.2f}ms")
         print(f"  P95: {p95:.2f}ms")
         print(f"  P99: {p99:.2f}ms")
+
+    # Print transaction hash summary
+    print(f"\nTransaction Hash Summary:")
+    print(f"  Unique transaction hashes: {len(results.sent_tx_hashes)}")
+    print(f"  Duplicate hashes detected: {len(results.duplicate_hashes)}")
+
+    if results.duplicate_hashes:
+        print(f"\n  Duplicate hash details:")
+        for h in results.duplicate_hashes[:10]:  # Show first 10
+            print(f"    - {h}")
+        if len(results.duplicate_hashes) > 10:
+            print(f"    ... and {len(results.duplicate_hashes) - 10} more")
 
     print(f"\n{'='*60}")
 

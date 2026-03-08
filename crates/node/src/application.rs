@@ -12,6 +12,7 @@ use std::path::Path;
 use tokio::sync::{RwLock, watch};
 use tokio::task::JoinHandle;
 use tracing::{info, debug, warn};
+use sha2::{Sha256, Digest};
 
 /// Transaction record for account history
 #[derive(Debug, Clone)]
@@ -1487,6 +1488,14 @@ impl Application {
         Ok("tesSUCCESS".to_string())
     }
 
+    /// Compute transaction hash from tx_blob (SHA-256)
+    fn compute_tx_hash(&self, tx_blob: &[u8]) -> UInt256 {
+        let mut hasher = Sha256::new();
+        hasher.update(tx_blob);
+        let result = hasher.finalize();
+        UInt256::new(result.into())
+    }
+
     /// Deserialize a transaction from bytes
     fn deserialize_transaction(&self, tx_blob: &[u8]) -> anyhow::Result<protocol::Transaction> {
         if tx_blob.len() < 10 {
@@ -1732,6 +1741,10 @@ impl Application {
         tx.taker_pays = taker_pays;
         tx.taker_gets = taker_gets;
         tx.limit_amount = limit_amount;
+
+        // Compute transaction hash from tx_blob (SHA-256)
+        let hash = self.compute_tx_hash(tx_blob);
+        tx.set_hash(hash);
 
         Ok(tx)
     }

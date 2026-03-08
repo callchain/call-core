@@ -1443,6 +1443,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serialization",
+ "sha2",
  "shamap",
  "storage",
  "tempfile",
