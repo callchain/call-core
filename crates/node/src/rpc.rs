@@ -157,16 +157,7 @@ impl AppRpcHandler {
         let public_key = private_key.to_public_key();
         let public_key_bytes = public_key.as_bytes();
 
-        // Serialize transaction from tx_json (without signature)
-        let tx_bytes = self.serialize_tx_json(tx_json)?;
-
-        // Sign the transaction hash (prefix + tx_bytes)
-        // The signature is computed over the hash of the serialized transaction
-        let signature = private_key.sign(&tx_bytes);
-        let signature_bytes = signature.as_bytes();
-
-        // Build the signed transaction by adding SigningPubKey and TxnSignature fields
-        // We need to re-serialize with these fields included
+        // Build the transaction object with ALL fields before signing
         let mut obj = STObject::new();
 
         // Copy fields from original tx_json
@@ -213,10 +204,21 @@ impl AppRpcHandler {
             }
         }
 
-        // Add SigningPubKey
+        // Add SigningPubKey BEFORE signing (it's part of the signed data)
         obj.insert(sf::SIGNING_PUB_KEY, STValue::VL(public_key_bytes.to_vec()));
 
-        // Add TxnSignature
+        // Serialize the transaction for signing (without TxnSignature yet)
+        let mut serializer = Serializer::new();
+        serializer.add_object(&obj).map_err(|e| {
+            JsonRpcError::new(31, format!("Serialization error: {}", e))
+        })?;
+        let tx_bytes = serializer.finish();
+
+        // Sign the serialized transaction
+        let signature = private_key.sign(&tx_bytes);
+        let signature_bytes = signature.as_bytes();
+
+        // Add TxnSignature after signing
         obj.insert(sf::TXN_SIGNATURE, STValue::VL(signature_bytes.to_vec()));
 
         // Serialize the complete signed transaction
