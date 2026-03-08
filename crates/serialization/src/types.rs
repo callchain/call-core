@@ -135,6 +135,7 @@ pub mod sf {
         HIGH_LIMIT = (SerializedTypeID::Amount, 4, true, true),
         TAKER_PAYS = (SerializedTypeID::Amount, 5, true, true),
         TAKER_GETS = (SerializedTypeID::Amount, 6, true, true),
+        TOTAL_SUPPLY = (SerializedTypeID::Amount, 7, true, true),
         BALANCE = (SerializedTypeID::Amount, 1, true, true),
         AMOUNT = (SerializedTypeID::Amount, 1, true, true),
         LIMIT_AMOUNT = (SerializedTypeID::Amount, 17, true, true),

@@ -225,6 +225,52 @@ impl AppRpcHandler {
             obj.insert(sf::AUTHORIZE, STValue::Account(authorize));
         }
 
+        // SetRegularKey fields
+        if let Some(regular_key_str) = tx_json.get("RegularKey").and_then(|v| v.as_str()) {
+            let regular_key = parse_account(regular_key_str)?;
+            obj.insert(sf::REGULAR_KEY, STValue::Account(regular_key));
+        }
+
+        // IssueSet fields
+        if let Some(total_supply_val) = tx_json.get("TotalSupply") {
+            if let Some(total_supply_str) = total_supply_val.as_str() {
+                let total_supply_drops: u64 = total_supply_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid TotalSupply"))?;
+                let total_supply = serialization::types::Amount::call(total_supply_drops);
+                obj.insert(sf::TOTAL_SUPPLY, STValue::Amount(total_supply));
+            }
+        }
+
+        // OfferCreate fields
+        if let Some(taker_pays_val) = tx_json.get("TakerPays") {
+            if let Some(taker_pays_str) = taker_pays_val.as_str() {
+                let taker_pays_drops: u64 = taker_pays_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid TakerPays"))?;
+                let taker_pays = serialization::types::Amount::call(taker_pays_drops);
+                obj.insert(sf::TAKER_PAYS, STValue::Amount(taker_pays));
+            }
+        }
+
+        if let Some(taker_gets_val) = tx_json.get("TakerGets") {
+            if let Some(taker_gets_str) = taker_gets_val.as_str() {
+                let taker_gets_drops: u64 = taker_gets_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid TakerGets"))?;
+                let taker_gets = serialization::types::Amount::call(taker_gets_drops);
+                obj.insert(sf::TAKER_GETS, STValue::Amount(taker_gets));
+            }
+        }
+
+        // TrustSet fields
+        if let Some(limit_amount_val) = tx_json.get("LimitAmount") {
+            if let Some(limit_amount_str) = limit_amount_val.as_str() {
+                let limit_amount_drops: u64 = limit_amount_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid LimitAmount"))?;
+                let limit_amount = serialization::types::Amount::call(limit_amount_drops);
+                obj.insert(sf::LIMIT_AMOUNT, STValue::Amount(limit_amount));
+            }
+        }
+
+        // OfferCancel fields
+        if let Some(offer_sequence) = tx_json.get("OfferSequence").and_then(|v| v.as_u64()) {
+            obj.insert(sf::OFFER_SEQUENCE, STValue::UInt32(offer_sequence as u32));
+        }
+
         // Add SigningPubKey BEFORE signing (it's part of the signed data)
         obj.insert(sf::SIGNING_PUB_KEY, STValue::VL(public_key_bytes.to_vec()));
 
@@ -233,10 +279,16 @@ impl AppRpcHandler {
         serializer.add_object(&obj).map_err(|e| {
             JsonRpcError::new(31, format!("Serialization error: {}", e))
         })?;
-        let tx_bytes = serializer.finish();
+        let serialized_tx = serializer.finish();
 
-        // Sign the serialized transaction
-        let signature = private_key.sign(&tx_bytes);
+        // Create signing payload with HashPrefix (same as transaction_signer.rs)
+        let prefix = crypto::HashPrefix::TxSign.as_bytes();
+        let mut sign_data = Vec::with_capacity(prefix.len() + serialized_tx.len());
+        sign_data.extend_from_slice(prefix);
+        sign_data.extend_from_slice(&serialized_tx);
+
+        // Sign the transaction data
+        let signature = private_key.sign(&sign_data);
         let signature_bytes = signature.as_bytes();
 
         // Add TxnSignature after signing

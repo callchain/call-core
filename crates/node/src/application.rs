@@ -1260,30 +1260,40 @@ impl Application {
         // Track transaction hashes for computing the new ledger hash
         let mut tx_hashes: Vec<primitives::UInt256> = Vec::new();
 
+        // Create a mutable view of the ledger state for all transactions
+        // This must be outside the loop so sequence updates are persisted
+        let ledger_info = LedgerInfo {
+            hash: self.current_ledger_hash,
+            seq: self.current_ledger_seq,
+            ..Default::default()
+        };
+        let mut view = MutableLedgerView::new(&mut self.ledger_state, ledger_info);
+
+        // Create apply context once - reused for all transactions
+        let mut ctx = ApplyContext {
+            ledger: &mut view,
+            rules: ApplyRules::default(),
+            ledger_seq: self.current_ledger_seq + 1,
+            parent_ledger_hash: self.current_ledger_hash,
+        };
+
         // Process transactions from queue directly
         let mut applied_count = 0;
 
         while let Some(queued) = self.tx_queue.pop_highest_fee() {
-            // Create a mutable view of the ledger state for each transaction
-            let ledger_info = LedgerInfo {
-                hash: self.current_ledger_hash,
-                seq: self.current_ledger_seq,
-                ..Default::default()
-            };
-
-            // Create the mutable ledger view
-            let mut view = MutableLedgerView::new(&mut self.ledger_state, ledger_info);
-
-            // Create apply context
-            let mut ctx = ApplyContext {
-                ledger: &mut view,
-                rules: ApplyRules::default(),
-                ledger_seq: self.current_ledger_seq + 1,
-                parent_ledger_hash: self.current_ledger_hash,
-            };
-
             // Apply transaction
             let result = engine.process(&mut ctx, &queued.transaction);
+
+            // Log failed transactions for debugging
+            if !result.ter.is_success() {
+                info!(
+                    "Transaction failed: type={:?}, account={}, seq={}, error={:?}",
+                    queued.transaction.get_tx_type(),
+                    hex::encode(queued.transaction.get_account().as_bytes()),
+                    queued.transaction.get_sequence(),
+                    result.ter
+                );
+            }
 
             // Count successful applications and track the transaction hash
             if result.ter.is_success() {
@@ -1519,6 +1529,11 @@ impl Application {
         let mut taker_pays: Option<Amount> = None;
         let mut taker_gets: Option<Amount> = None;
         let mut limit_amount: Option<Amount> = None;
+        let mut nickname: Option<primitives::UInt256> = None;
+        let mut regular_key: Option<primitives::AccountID> = None;
+        let mut total_supply: Option<Amount> = None;
+        let mut offer_sequence: Option<u32> = None;
+        let mut unauthorize: Option<primitives::AccountID> = None;
 
         // Parse fields using field IDs
         while !iter.eof() {
@@ -1598,6 +1613,36 @@ impl Application {
                 (7, 4) => {
                     txn_signature = Some(iter.get_vl()
                         .map_err(|e| anyhow::anyhow!("Failed to read txn signature: {}", e))?);
+                }
+                // Nickname (type=5/Hash256, field=18) - for NicknameSet
+                (5, 18) => {
+                    nickname = Some(iter.get256()
+                        .map_err(|e| anyhow::anyhow!("Failed to read nickname: {}", e))?);
+                }
+                // RegularKey (type=8/Account, field=8) - for SetRegularKey
+                (8, 8) => {
+                    regular_key = Some(iter.get_account()
+                        .map_err(|e| anyhow::anyhow!("Failed to read regular key: {}", e))?);
+                }
+                // TotalSupply (type=6/Amount, field=7) - for IssueSet
+                (6, 7) => {
+                    total_supply = Some(iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read total supply: {}", e))?);
+                }
+                // OfferSequence (type=2/UInt32, field=25) - for OfferCancel
+                (2, 25) => {
+                    offer_sequence = Some(iter.get32()
+                        .map_err(|e| anyhow::anyhow!("Failed to read offer sequence: {}", e))?);
+                }
+                // Authorize (type=8/Account, field=9) - for DepositPreauth (stored as destination)
+                (8, 9) => {
+                    destination = Some(iter.get_account()
+                        .map_err(|e| anyhow::anyhow!("Failed to read authorize: {}", e))?);
+                }
+                // Unauthorize (type=8/Account, field=10) - for DepositPreauth cancel
+                (8, 10) => {
+                    unauthorize = Some(iter.get_account()
+                        .map_err(|e| anyhow::anyhow!("Failed to read unauthorize: {}", e))?);
                 }
                 // Unknown field - skip based on type
                 (type_id, field_num) => {
@@ -1741,6 +1786,13 @@ impl Application {
         tx.taker_pays = taker_pays;
         tx.taker_gets = taker_gets;
         tx.limit_amount = limit_amount;
+        // Store nickname as Vec<u8> for NicknameSet transactions
+        tx.nickname = nickname.map(|n| n.as_bytes().to_vec());
+        // New fields for SetRegularKey, IssueSet, OfferCancel, DepositPreauth
+        tx.regular_key = regular_key;
+        tx.total_supply = total_supply;
+        tx.offer_sequence = offer_sequence.unwrap_or(0);
+        tx.unauthorize = unauthorize;
 
         // Compute transaction hash from tx_blob (SHA-256)
         let hash = self.compute_tx_hash(tx_blob);

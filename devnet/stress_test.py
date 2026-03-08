@@ -272,7 +272,7 @@ class TransactionTester:
 
         # Log every transaction with its result
         if engine_result == "tesSUCCESS":
-            print(f"  [SUCCESS] {tx_type} {tx_id} -> {engine_result}")
+            pass  # Suppress success messages to reduce output noise
         elif "terDUPLICATE" in engine_result:
             print(f"  [DUPLICATE] {tx_type} {tx_id} -> {engine_result}")
         elif engine_result.startswith("ter"):

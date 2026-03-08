@@ -1,0 +1,105 @@
+{
+   "id" : 1,
+   "result" : {
+      "info" : {
+         "build_version" : "0.2.3",
+         "complete_ledgers" : "83797416-83797421",
+         "hostid" : "iZ8vbdysgs8j4v7hy48kf3Z",
+         "io_latency_ms" : 1,
+         "last_close" : {
+            "converge_time_s" : 1.999,
+            "proposers" : 4
+         },
+         "load" : {
+            "job_types" : [
+               {
+                  "job_type" : "publishAcqLedger",
+                  "peak_time" : 2
+               },
+               {
+                  "avg_time" : 5,
+                  "job_type" : "ledgerData",
+                  "peak_time" : 19,
+                  "per_second" : 4
+               },
+               {
+                  "in_progress" : 1,
+                  "job_type" : "clientCommand"
+               },
+               {
+                  "avg_time" : 2,
+                  "job_type" : "advanceLedger",
+                  "peak_time" : 3
+               },
+               {
+                  "job_type" : "writeObjects",
+                  "peak_time" : 11,
+                  "per_second" : 285
+               },
+               {
+                  "job_type" : "trustedProposal",
+                  "per_second" : 1
+               },
+               {
+                  "job_type" : "peerCommand",
+                  "per_second" : 14
+               },
+               {
+                  "job_type" : "SyncReadNode",
+                  "peak_time" : 1,
+                  "per_second" : 5
+               },
+               {
+                  "job_type" : "AsyncReadNode",
+                  "peak_time" : 28,
+                  "per_second" : 955
+               },
+               {
+                  "job_type" : "WriteNode",
+                  "per_second" : 960
+               }
+            ],
+            "threads" : 4
+         },
+         "load_factor" : 1,
+         "peers" : 4,
+         "pubkey_node" : "n9JtVjvqYz92nNwgtmSejy77wwnEQDBARmeSoeQGmHepNugHXK1s",
+         "pubkey_validator" : "n9L14azqz6ArU4m5r6p9XihVMKFZ3Uv9Ee45YGNyqnRWsVQuL9Xz",
+         "server_state" : "proposing",
+         "state_accounting" : {
+            "connected" : {
+               "duration_us" : "4001180",
+               "transitions" : 1
+            },
+            "disconnected" : {
+               "duration_us" : "1286214",
+               "transitions" : 1
+            },
+            "full" : {
+               "duration_us" : "1324779",
+               "transitions" : 1
+            },
+            "syncing" : {
+               "duration_us" : "4001401",
+               "transitions" : 1
+            },
+            "tracking" : {
+               "duration_us" : "1",
+               "transitions" : 1
+            }
+         },
+         "uptime" : 11,
+         "validated_ledger" : {
+            "age" : 2,
+            "base_fee_CALL" : 0.001,
+            "hash" : "F20600AA24B8FCC75D0E55740DFE4278092B3DBFD68EE9C1BC10F2E90713C560",
+            "reserve_base_CALL" : 1,
+            "reserve_inc_CALL" : 0.1,
+            "seq" : 83797421
+         },
+         "validation_quorum" : 3,
+         "validator_list_expires" : "never"
+      },
+      "status" : "success"
+   }
+}

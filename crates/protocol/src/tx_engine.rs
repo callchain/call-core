@@ -133,6 +133,7 @@ impl TransactionEngine {
             | TxType::AccountSet
             | TxType::SetRegularKey
             | TxType::SignerListSet
+            | TxType::NicknameSet
             | TxType::DepositPreauth => {}
             _ => return TER::temINVALID_TRANSACTION_TYPE,
         }
@@ -1088,6 +1089,16 @@ impl TransactionEngine {
         // Fee
         obj.insert(sf::FEE, STValue::Amount(serialization::Amount::call(tx.fee)));
 
+        // Flags (optional)
+        if let Some(flags) = tx.flags {
+            obj.insert(sf::FLAGS, STValue::UInt32(flags));
+        }
+
+        // SourceTag (optional)
+        if let Some(tag) = tx.source_tag {
+            obj.insert(sf::SOURCE_TAG, STValue::UInt32(tag));
+        }
+
         // Transaction-specific fields
         match tx.tx_type {
             TxType::Payment => {
@@ -1143,6 +1154,31 @@ impl TransactionEngine {
                         STValue::Object(signer_obj)
                     }).collect();
                     obj.insert(sf::SIGNER_ENTRIES, STValue::Array(signer_values));
+                }
+            }
+            TxType::NicknameSet => {
+                if let Some(nickname) = &tx.nickname {
+                    // Nickname is stored as Vec<u8> but serialized as Hash256
+                    // Convert Vec<u8> back to UInt256 for signature verification
+                    if nickname.len() == 32 {
+                        let bytes: [u8; 32] = nickname.as_slice().try_into().unwrap();
+                        obj.insert(sf::NICKNAME, STValue::Hash256(primitives::UInt256::new(bytes)));
+                    }
+                }
+            }
+            TxType::DepositPreauth => {
+                // For authorize: use destination field
+                if let Some(dest) = &tx.destination {
+                    obj.insert(sf::AUTHORIZE, STValue::Account(*dest));
+                }
+                // For unauthorize: use unauthorize field
+                if let Some(unauth) = &tx.unauthorize {
+                    obj.insert(sf::UNAUTHORIZE, STValue::Account(*unauth));
+                }
+            }
+            TxType::IssueSet => {
+                if let Some(supply) = &tx.total_supply {
+                    obj.insert(sf::TOTAL_SUPPLY, STValue::Amount(*supply));
                 }
             }
             _ => {}
