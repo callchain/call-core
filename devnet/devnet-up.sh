@@ -180,11 +180,29 @@ test_devnet() {
     # Test RPC endpoints
     for port in 5005 5006 5007; do
         echo -n "  Testing Node on port $port... "
-        response=$(curl -s -X POST "http://localhost:$port/" \
-            -H "Content-Type: application/json" \
-            -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
 
-        if echo "$response" | grep -q "success"; then
+        # Retry logic for node check
+        local retries=3
+        local retry_count=0
+        local node_ok=false
+
+        while [ $retry_count -lt $retries ]; do
+            response=$(curl -s -m 3 -X POST "http://localhost:$port/" \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
+
+            if echo "$response" | grep -q "success"; then
+                node_ok=true
+                break
+            fi
+
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $retries ]; then
+                sleep 1
+            fi
+        done
+
+        if [ "$node_ok" = true ]; then
             echo -e "${GREEN}OK${NC}"
         else
             echo -e "${RED}FAILED${NC}"
