@@ -39,35 +39,30 @@ GENESIS_WALLETS = [
         "name": "Genesis Account 1",
         "seed": "ssyB7KxAvfRwQ6mseEjt3iY1qeqMC",
         "address": "cGmJBrEfFssWuas4kCoHTX5r6aMEf6QHhy",
-        "hex_id": "acea885a70534357d59c30ae4f5d9de02e336530",
         "balance": "100000000000"
     },
     {
         "name": "Genesis Account 2",
         "seed": "snTHcoLdd2vwrCmNunkMZRhbfLuLs",
         "address": "c3K3xXhvsWBnP3TitQfeg2ihAuaYybvtc7",
-        "hex_id": "50370298f2835f216d4f2956738e24369cbc3b77",
         "balance": "50000000000"
     },
     {
         "name": "Genesis Account 3",
         "seed": "shCQseDN6PMeeBK31bCjhQqYY4LrG",
         "address": "cHSFoKcGXFZdbB7EKmWQMTUJbr66dwfMR1",
-        "hex_id": "b4644fcd4f991451aa69693a60b6ca7689a58548",
         "balance": "25000000000"
     },
     {
         "name": "Genesis Account 4",
         "seed": "shiWcE5Y2DJqZ2X2oLCrqYmovqz45",
         "address": "cKKeufyrSZymFeGmtF1Vhi11eCSf2i6MhR",
-        "hex_id": "c8f96339b969bb5da024b9ab82e93460647416a7",
         "balance": "10000000000"
     },
     {
         "name": "Genesis Account 5",
         "seed": "ss1nurfhbpEnnZkDai6GTYdzT7Jqb",
         "address": "cUUsn5u9qPq7MiMiEDwdjMPsHHKyaesHPH",
-        "hex_id": "7abfb259dd4df0fe4f72398743542bd017a1e34b",
         "balance": "5000000000"
     }
 ]
@@ -263,8 +258,8 @@ class TransactionTester:
 
         tx_json = {
             "TransactionType": "Payment",
-            "Account": GENESIS_WALLETS[sender_idx]["hex_id"],
-            "Destination": receiver["hex_id"],
+            "Account": GENESIS_WALLETS[sender_idx]["address"],
+            "Destination": receiver["address"],
             "Amount": "1000000",  # 1 CALL in drops
             "Sequence": self._get_next_sequence(sender_idx),
             "Fee": "10"
@@ -278,7 +273,7 @@ class TransactionTester:
 
         tx_json = {
             "TransactionType": "AccountSet",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
             "Domain": "6578616D706C652E636F6D"  # "example.com" in hex
@@ -293,12 +288,12 @@ class TransactionTester:
 
         tx_json = {
             "TransactionType": "TrustSet",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
             "LimitAmount": {
                 "currency": "USD",
-                "issuer": issuer["hex_id"],
+                "issuer": issuer["address"],
                 "value": "1000"
             }
         }
@@ -311,13 +306,13 @@ class TransactionTester:
 
         tx_json = {
             "TransactionType": "OfferCreate",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
             "TakerPays": "5000000",  # 5 CALL
             "TakerGets": {
                 "currency": "USD",
-                "issuer": GENESIS_WALLETS[0]["hex_id"],
+                "issuer": GENESIS_WALLETS[0]["address"],
                 "value": "100"
             }
         }
@@ -332,13 +327,13 @@ class TransactionTester:
         # First create an offer
         create_tx = {
             "TransactionType": "OfferCreate",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": seq,
             "Fee": "10",
             "TakerPays": "1000000",
             "TakerGets": {
                 "currency": "EUR",
-                "issuer": GENESIS_WALLETS[0]["hex_id"],
+                "issuer": GENESIS_WALLETS[0]["address"],
                 "value": "50"
             }
         }
@@ -351,7 +346,7 @@ class TransactionTester:
         # Now cancel the offer (use the sequence of the created offer)
         cancel_tx = {
             "TransactionType": "OfferCancel",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
             "OfferSequence": seq
@@ -367,17 +362,17 @@ class TransactionTester:
 
         tx_json = {
             "TransactionType": "SignerListSet",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
             "SignerQuorum": 2,
             "Signers": [
                 {
-                    "Account": signer1["hex_id"],
+                    "Account": signer1["address"],
                     "SignerWeight": 1
                 },
                 {
-                    "Account": signer2["hex_id"],
+                    "Account": signer2["address"],
                     "SignerWeight": 1
                 }
             ]
@@ -392,10 +387,10 @@ class TransactionTester:
 
         tx_json = {
             "TransactionType": "SetRegularKey",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
-            "RegularKey": regular_key["hex_id"]
+            "RegularKey": regular_key["address"]
         }
 
         return self._sign_and_submit(account_idx, tx_json, "SetRegularKey")
@@ -406,7 +401,7 @@ class TransactionTester:
 
         tx_json = {
             "TransactionType": "NicknameSet",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
             "Nickname": "74657374"  # "test" in hex
@@ -421,10 +416,10 @@ class TransactionTester:
 
         tx_json = {
             "TransactionType": "DepositPreauth",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
-            "Authorize": authorize["hex_id"]
+            "Authorize": authorize["address"]
         }
 
         return self._sign_and_submit(account_idx, tx_json, "DepositPreauth")
@@ -435,12 +430,12 @@ class TransactionTester:
 
         tx_json = {
             "TransactionType": "IssueSet",
-            "Account": GENESIS_WALLETS[account_idx]["hex_id"],
+            "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
             "TotalSupply": {
                 "currency": "GOLD",
-                "issuer": GENESIS_WALLETS[account_idx]["hex_id"],
+                "issuer": GENESIS_WALLETS[account_idx]["address"],
                 "value": "1000000"
             }
         }
@@ -495,7 +490,7 @@ def run_stress_test(args) -> StressTestResults:
     print("Verifying genesis accounts...")
     all_accounts_funded = True
     for wallet in GENESIS_WALLETS:
-        result = rpc.account_info(wallet["hex_id"])
+        result = rpc.account_info(wallet["address"])
         if "error" in result:
             print(f"  WARNING: {wallet['name']} - {result.get('error', 'Unknown error')}")
             all_accounts_funded = False
