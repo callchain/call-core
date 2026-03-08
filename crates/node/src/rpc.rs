@@ -3,6 +3,7 @@ use tokio::sync::Mutex;
 use primitives::{AccountID, UInt256};
 
 use crypto::{PrivateKey, KeyType};
+use crate::signing::{sign_transaction_local, parse_account as signing_parse_account};
 
 /// JSON-RPC 2.0 request
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -139,8 +140,6 @@ impl AppRpcHandler {
 
     /// Handle the `sign` RPC method
     async fn handle_sign(&self, params: Option<serde_json::Value>) -> Result<serde_json::Value, JsonRpcError> {
-        use serialization::{Serializer, types::{STObject, STValue, sf}};
-
         let params = params.ok_or(JsonRpcError::invalid_params())?;
         let secret = params
             .get("secret")
@@ -153,167 +152,17 @@ impl AppRpcHandler {
         // Derive private key from secret
         let private_key = self.derive_private_key(secret)?;
 
-        // Get the public key for SigningPubKey field
-        let public_key = private_key.to_public_key();
-        let public_key_bytes = public_key.as_bytes();
-
-        // Build the transaction object with ALL fields before signing
-        let mut obj = STObject::new();
-
-        // Copy fields from original tx_json
-        if let Some(tx_type_str) = tx_json.get("TransactionType").and_then(|v| v.as_str()) {
-            let tx_type = match tx_type_str {
-                "Payment" => 0u16,
-                "AccountSet" => 3u16,
-                "SetRegularKey" => 5u16,
-                "NicknameSet" => 6u16,
-                "OfferCreate" => 7u16,
-                "OfferCancel" => 8u16,
-                "SignerListSet" => 12u16,
-                "IssueSet" => 16u16,
-                "DepositPreauth" => 19u16,
-                "TrustSet" => 20u16,
-                _ => return Err(JsonRpcError::new(31, format!("Unknown transaction type: {}", tx_type_str))),
-            };
-            obj.insert(sf::TRANSACTION_TYPE, STValue::UInt16(tx_type));
-        }
-
-        if let Some(account_str) = tx_json.get("Account").and_then(|v| v.as_str()) {
-            let account = parse_account(account_str)?;
-            obj.insert(sf::ACCOUNT, STValue::Account(account));
-        }
-
-        if let Some(sequence) = tx_json.get("Sequence").and_then(|v| v.as_u64()) {
-            obj.insert(sf::SEQUENCE, STValue::UInt32(sequence as u32));
-        }
-
-        if let Some(fee) = tx_json.get("Fee").and_then(|v| v.as_str()) {
-            let fee_drops: u64 = fee.parse().map_err(|_| JsonRpcError::new(31, "Invalid Fee"))?;
-            let fee_amount = serialization::types::Amount::call(fee_drops);
-            obj.insert(sf::FEE, STValue::Amount(fee_amount));
-        }
-
-        if let Some(dest_str) = tx_json.get("Destination").and_then(|v| v.as_str()) {
-            let dest = parse_account(dest_str)?;
-            obj.insert(sf::DESTINATION, STValue::Account(dest));
-        }
-
-        if let Some(amount_val) = tx_json.get("Amount") {
-            if let Some(amount_str) = amount_val.as_str() {
-                let amount_drops: u64 = amount_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid Amount"))?;
-                let amount = serialization::types::Amount::call(amount_drops);
-                obj.insert(sf::AMOUNT, STValue::Amount(amount));
+        // Use shared signing logic (same as CLI tool)
+        match sign_transaction_local(&private_key, tx_json) {
+            Ok(result) => {
+                Ok(serde_json::json!({
+                    "tx_blob": result.tx_blob,
+                    "tx_json": result.tx_json,
+                    "status": "success",
+                }))
             }
+            Err(e) => Err(JsonRpcError::new(31, e)),
         }
-
-        // NicknameSet fields
-        if let Some(nickname_str) = tx_json.get("Nickname").and_then(|v| v.as_str()) {
-            // Nickname is a Hash256 (type Hash256, field 18)
-            let nickname_bytes = hex::decode(nickname_str).map_err(|_| {
-                JsonRpcError::new(31, "Invalid Nickname: must be hex-encoded")
-            })?;
-            if nickname_bytes.len() != 32 {
-                return Err(JsonRpcError::new(31, "Invalid Nickname: must be 32 bytes"));
-            }
-            let nickname_hash = UInt256::new(nickname_bytes.try_into().unwrap());
-            obj.insert(sf::NICKNAME, STValue::Hash256(nickname_hash));
-        }
-
-        // DepositPreauth fields
-        if let Some(authorize_str) = tx_json.get("Authorize").and_then(|v| v.as_str()) {
-            let authorize = parse_account(authorize_str)?;
-            obj.insert(sf::AUTHORIZE, STValue::Account(authorize));
-        }
-
-        // SetRegularKey fields
-        if let Some(regular_key_str) = tx_json.get("RegularKey").and_then(|v| v.as_str()) {
-            let regular_key = parse_account(regular_key_str)?;
-            obj.insert(sf::REGULAR_KEY, STValue::Account(regular_key));
-        }
-
-        // IssueSet fields
-        if let Some(total_supply_val) = tx_json.get("TotalSupply") {
-            if let Some(total_supply_str) = total_supply_val.as_str() {
-                let total_supply_drops: u64 = total_supply_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid TotalSupply"))?;
-                let total_supply = serialization::types::Amount::call(total_supply_drops);
-                obj.insert(sf::TOTAL_SUPPLY, STValue::Amount(total_supply));
-            }
-        }
-
-        // OfferCreate fields
-        if let Some(taker_pays_val) = tx_json.get("TakerPays") {
-            if let Some(taker_pays_str) = taker_pays_val.as_str() {
-                let taker_pays_drops: u64 = taker_pays_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid TakerPays"))?;
-                let taker_pays = serialization::types::Amount::call(taker_pays_drops);
-                obj.insert(sf::TAKER_PAYS, STValue::Amount(taker_pays));
-            }
-        }
-
-        if let Some(taker_gets_val) = tx_json.get("TakerGets") {
-            if let Some(taker_gets_str) = taker_gets_val.as_str() {
-                let taker_gets_drops: u64 = taker_gets_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid TakerGets"))?;
-                let taker_gets = serialization::types::Amount::call(taker_gets_drops);
-                obj.insert(sf::TAKER_GETS, STValue::Amount(taker_gets));
-            }
-        }
-
-        // TrustSet fields
-        if let Some(limit_amount_val) = tx_json.get("LimitAmount") {
-            if let Some(limit_amount_str) = limit_amount_val.as_str() {
-                let limit_amount_drops: u64 = limit_amount_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid LimitAmount"))?;
-                let limit_amount = serialization::types::Amount::call(limit_amount_drops);
-                obj.insert(sf::LIMIT_AMOUNT, STValue::Amount(limit_amount));
-            }
-        }
-
-        // OfferCancel fields
-        if let Some(offer_sequence) = tx_json.get("OfferSequence").and_then(|v| v.as_u64()) {
-            obj.insert(sf::OFFER_SEQUENCE, STValue::UInt32(offer_sequence as u32));
-        }
-
-        // Add SigningPubKey BEFORE signing (it's part of the signed data)
-        obj.insert(sf::SIGNING_PUB_KEY, STValue::VL(public_key_bytes.to_vec()));
-
-        // Serialize the transaction for signing (without TxnSignature yet)
-        let mut serializer = Serializer::new();
-        serializer.add_object(&obj).map_err(|e| {
-            JsonRpcError::new(31, format!("Serialization error: {}", e))
-        })?;
-        let serialized_tx = serializer.finish();
-
-        // Create signing payload with HashPrefix (same as transaction_signer.rs)
-        let prefix = crypto::HashPrefix::TxSign.as_bytes();
-        let mut sign_data = Vec::with_capacity(prefix.len() + serialized_tx.len());
-        sign_data.extend_from_slice(prefix);
-        sign_data.extend_from_slice(&serialized_tx);
-
-        // Sign the transaction data
-        let signature = private_key.sign(&sign_data);
-        let signature_bytes = signature.as_bytes();
-
-        // Add TxnSignature after signing
-        obj.insert(sf::TXN_SIGNATURE, STValue::VL(signature_bytes.to_vec()));
-
-        // Serialize the complete signed transaction
-        let mut serializer = Serializer::new();
-        serializer.add_object(&obj).map_err(|e| {
-            JsonRpcError::new(31, format!("Serialization error: {}", e))
-        })?;
-
-        let signed_tx_bytes = serializer.finish();
-        let tx_blob = hex::encode(&signed_tx_bytes);
-
-        // Return response with tx_blob and updated tx_json
-        let mut signed_tx_json = tx_json.clone();
-        if let Some(obj) = signed_tx_json.as_object_mut() {
-            obj.insert("TxnSignature".to_string(), serde_json::json!(hex::encode(signature_bytes)));
-        }
-
-        Ok(serde_json::json!({
-            "tx_blob": tx_blob,
-            "tx_json": signed_tx_json,
-            "status": "success",
-        }))
     }
 
     /// Handle the `sign_for` RPC method
@@ -482,6 +331,50 @@ fn parse_account(account_str: &str) -> Result<AccountID, JsonRpcError> {
     }
 
     Err(JsonRpcError::new(35, "Account malformed."))
+}
+
+/// Helper to parse issued currency amount
+fn parse_issued_amount(value: &str, currency: &str, issuer: &str) -> Result<serialization::types::Amount, JsonRpcError> {
+    use serialization::types::Amount;
+    use primitives::{AccountID, Currency};
+
+    // Parse value (can be decimal like "1000" or "1000.00")
+    let value_i64: i64 = value.parse().map_err(|_| JsonRpcError::new(31, "Invalid amount value"))?;
+
+    // Parse issuer account
+    let issuer_account = if issuer.is_empty() {
+        AccountID::new([0u8; 20])
+    } else {
+        parse_account(issuer)?
+    };
+
+    // Parse currency code - convert to 20-byte format
+    let currency_bytes: [u8; 20] = if currency.len() == 3 {
+        // Standard 3-letter currency code (placed at bytes 12, 13, 14)
+        let mut bytes = [0u8; 20];
+        bytes[12] = currency.as_bytes()[0];
+        bytes[13] = currency.as_bytes()[1];
+        bytes[14] = currency.as_bytes()[2];
+        bytes
+    } else if currency.len() == 40 {
+        // Hex currency code
+        if let Ok(hex_bytes) = hex::decode(currency) {
+            if hex_bytes.len() == 20 {
+                hex_bytes.try_into().unwrap()
+            } else {
+                return Err(JsonRpcError::new(31, "Invalid currency hex length"));
+            }
+        } else {
+            return Err(JsonRpcError::new(31, "Invalid currency hex"));
+        }
+    } else {
+        return Err(JsonRpcError::new(31, "Invalid currency code"));
+    };
+    let currency_obj = Currency::new(currency_bytes);
+
+    // Create issued amount with exponent -15 (standard for issued currencies)
+    Amount::issued(value_i64, -15, currency_obj, issuer_account)
+        .ok_or_else(|| JsonRpcError::new(31, "Invalid issued amount"))
 }
 
 /// Helper to parse UInt256 from hex string

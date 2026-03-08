@@ -39,3 +39,7 @@ tempfile = "3.8"
 [[bin]]
 name = "calld"
 path = "src/main.rs"
+
+[[bin]]
+name = "calld-sign"
+path = "src/sign_cli.rs"

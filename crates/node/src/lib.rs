@@ -2,6 +2,7 @@ pub mod application;
 pub mod config;
 pub mod metrics;
 pub mod rpc;
+pub mod signing;
 pub mod websocket;
 
 pub use application::{Application, AccountIssue, IssueTracker, IssueType, BlacklistStore, TransactionHistory, AccountTxRecord, LogManager, LogRotationResult, FeatureStore, FeatureFlag};
