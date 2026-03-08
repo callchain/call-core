@@ -29,8 +29,76 @@ import concurrent.futures
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable
 import hashlib
+import subprocess
+import os
 from urllib.request import urlopen, Request
 from urllib.error import URLError
+
+
+def sign_with_calld_sign(secret: str, tx_json: Dict) -> Optional[str]:
+    """
+    Sign a transaction using the local calld-sign CLI tool.
+    Returns the signed tx_blob or None if signing failed.
+    """
+    # Find calld-sign binary
+    calld_sign_paths = [
+        "./target/release/calld-sign",
+        "../target/release/calld-sign",
+        "./calld-sign",
+        "calld-sign",
+    ]
+
+    calld_sign = None
+    for path in calld_sign_paths:
+        if os.path.exists(path) or subprocess.run(["which", path], capture_output=True).returncode == 0:
+            calld_sign = path
+            break
+
+    if not calld_sign:
+        # Try to find in PATH
+        result = subprocess.run(["which", "calld-sign"], capture_output=True, text=True)
+        if result.returncode == 0:
+            calld_sign = result.stdout.strip()
+
+    if not calld_sign:
+        print("[ERROR] calld-sign binary not found. Please build with: cargo build --release --bin calld-sign")
+        return None
+
+    # Prepare tx_json as string
+    tx_json_str = json.dumps(tx_json)
+
+    # Build command
+    cmd = [
+        calld_sign,
+        "--secret", secret,
+        "--tx-json", tx_json_str,
+        "--format", "blob"
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            print(f"[SIGN ERROR] {result.stderr.strip()}")
+            return None
+
+        # Return the tx_blob (strip whitespace)
+        tx_blob = result.stdout.strip()
+        if tx_blob:
+            return tx_blob
+        return None
+
+    except subprocess.TimeoutExpired:
+        print("[SIGN ERROR] calld-sign timed out")
+        return None
+    except Exception as e:
+        print(f"[SIGN ERROR] {e}")
+        return None
 
 
 # Genesis wallet information - funded accounts with known seeds
@@ -182,22 +250,10 @@ class CallCoreRPC:
 
     def sign(self, secret: str, tx_json: Dict) -> Optional[str]:
         """
-        Sign a transaction using the node's sign RPC method.
+        Sign a transaction using the local calld-sign CLI tool.
         Returns the signed tx_blob or None if signing failed.
         """
-        params = {
-            "secret": secret,
-            "tx_json": tx_json
-        }
-        response = self._call("sign", params)
-
-        if "error" in response:
-            return None
-
-        result = response.get("result", {})
-        if "tx_blob" in result:
-            return result["tx_blob"]
-        return None
+        return sign_with_calld_sign(secret, tx_json)
 
     def submit_transaction(self, tx_blob: str) -> Dict:
         """Submit a transaction"""
