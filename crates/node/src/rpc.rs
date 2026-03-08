@@ -166,10 +166,12 @@ impl AppRpcHandler {
                 "Payment" => 0u16,
                 "AccountSet" => 3u16,
                 "SetRegularKey" => 5u16,
+                "NicknameSet" => 6u16,
                 "OfferCreate" => 7u16,
                 "OfferCancel" => 8u16,
                 "SignerListSet" => 12u16,
                 "IssueSet" => 16u16,
+                "DepositPreauth" => 19u16,
                 "TrustSet" => 20u16,
                 _ => return Err(JsonRpcError::new(31, format!("Unknown transaction type: {}", tx_type_str))),
             };
@@ -202,6 +204,25 @@ impl AppRpcHandler {
                 let amount = serialization::types::Amount::call(amount_drops);
                 obj.insert(sf::AMOUNT, STValue::Amount(amount));
             }
+        }
+
+        // NicknameSet fields
+        if let Some(nickname_str) = tx_json.get("Nickname").and_then(|v| v.as_str()) {
+            // Nickname is a Hash256 (type Hash256, field 18)
+            let nickname_bytes = hex::decode(nickname_str).map_err(|_| {
+                JsonRpcError::new(31, "Invalid Nickname: must be hex-encoded")
+            })?;
+            if nickname_bytes.len() != 32 {
+                return Err(JsonRpcError::new(31, "Invalid Nickname: must be 32 bytes"));
+            }
+            let nickname_hash = UInt256::new(nickname_bytes.try_into().unwrap());
+            obj.insert(sf::NICKNAME, STValue::Hash256(nickname_hash));
+        }
+
+        // DepositPreauth fields
+        if let Some(authorize_str) = tx_json.get("Authorize").and_then(|v| v.as_str()) {
+            let authorize = parse_account(authorize_str)?;
+            obj.insert(sf::AUTHORIZE, STValue::Account(authorize));
         }
 
         // Add SigningPubKey BEFORE signing (it's part of the signed data)

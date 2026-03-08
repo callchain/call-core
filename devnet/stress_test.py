@@ -442,12 +442,17 @@ class TransactionTester:
         """Test NicknameSet transaction"""
         account_idx = 2
 
+        # Nickname is a Hash256 field - must be 32 bytes (64 hex chars)
+        # Using SHA256 hash of "test" to get a proper 32-byte value
+        import hashlib
+        nickname_hash = hashlib.sha256(b"test").hexdigest()
+
         tx_json = {
             "TransactionType": "NicknameSet",
             "Account": GENESIS_WALLETS[account_idx]["address"],
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
-            "Nickname": "74657374"  # "test" in hex
+            "Nickname": nickname_hash  # 64 hex chars = 32 bytes
         }
 
         return self._sign_and_submit(account_idx, tx_json, "NicknameSet")
@@ -487,19 +492,18 @@ class TransactionTester:
 
     def run_all_tests(self) -> List[TestResult]:
         """Run all transaction type tests"""
-        # Note: Only Payment is fully supported by sign RPC currently
-        # Other transaction types require additional fields in serialize_tx_json
+        # Test all transaction types - some may fail if sign RPC lacks field support
         tests = [
             self.test_payment,
-            # self.test_account_set,  # Requires Domain field support
-            # self.test_trust_set,    # Requires LimitAmount field support
-            # self.test_offer_create, # Requires TakerPays/TakerGets field support
-            # self.test_offer_cancel, # Depends on OfferCreate
-            # self.test_signer_list_set,  # Requires Signers field support
-            # self.test_set_regular_key,  # Requires RegularKey field support
-            # self.test_nickname_set,     # Requires Nickname field support
-            # self.test_deposit_preauth,  # Requires Authorize field support
-            # self.test_issue_set,        # Requires TotalSupply field support
+            self.test_account_set,
+            self.test_trust_set,
+            self.test_offer_create,
+            self.test_offer_cancel,
+            self.test_signer_list_set,
+            self.test_set_regular_key,
+            self.test_nickname_set,
+            self.test_deposit_preauth,
+            self.test_issue_set,
         ]
 
         results = []
@@ -683,7 +687,7 @@ def main():
     parser.add_argument("--url", default="http://localhost:5005",
                         help="RPC endpoint URL (default: http://localhost:5005)")
     parser.add_argument("--count", type=int, default=100,
-                        help="Total number of transaction iterations (default: 100)")
+                        help="Total number of transaction iterations (default: 100, use 10000+ for large scale testing)")
     parser.add_argument("--threads", type=int, default=4,
                         help="Number of concurrent threads (default: 4)")
 
