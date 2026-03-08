@@ -207,13 +207,16 @@ class CallCoreRPC:
 class TransactionTester:
     """Tests all transaction types using genesis-funded accounts"""
 
-    def __init__(self, rpc: CallCoreRPC, seq_offset: int = 0, results: StressTestResults = None):
+    def __init__(self, rpc: CallCoreRPC, seq_offset: int = 0, results: StressTestResults = None, worker_id: int = 0):
         self.rpc = rpc
         # Track sequence numbers per account to avoid conflicts
         # seq_offset ensures different workers use different sequence ranges
         self.sequences = {i: 1 + seq_offset for i in range(len(GENESIS_WALLETS))}
         self.lock = threading.Lock()
         self.results = results
+        self.worker_id = worker_id
+        # Track submitted transactions for later verification
+        self.submitted_txs: List[Dict] = []
 
     def _get_next_sequence(self, account_index: int) -> int:
         """Get the next sequence number for an account"""
@@ -293,8 +296,25 @@ class TransactionTester:
                     # Print every transaction hash for debugging
                     print(f"    [TX HASH] {tx_hash} ({account[:12]}... seq={seq})")
 
+        # IMPORTANT: submit returns "tesSUCCESS" meaning "accepted into queue"
+        # The actual result is determined during ledger close
+        # We track the transaction and will verify actual results after ledger close
+
+        # Store transaction info for later verification
+        tx_info = {
+            "tx_type": tx_type,
+            "account": account,
+            "seq": seq,
+            "tx_hash": tx_hash,
+            "tx_blob": tx_blob,
+            "elapsed": elapsed,
+            "submitted": True
+        }
+        self.submitted_txs.append(tx_info)
+
         if engine_result == "tesSUCCESS":
-            return TestResult(tx_type, True, None, elapsed, tx_hash)
+            # Accepted into queue - actual result unknown until ledger close
+            return TestResult(tx_type, True, "ACCEPTED_INTO_QUEUE", elapsed, tx_hash)
         elif engine_result.startswith("ter"):
             return TestResult(tx_type, False, f"{engine_result}: retryable error", elapsed, tx_hash)
         elif engine_result:
@@ -621,27 +641,34 @@ def print_results(results: StressTestResults):
     print("Stress Test Results")
     print(f"{'='*60}")
 
-    print(f"\nSummary:")
+    print(f"\nIMPORTANT: Submit returns 'success' when transaction is accepted into queue.")
+    print(f"The actual application result is determined during ledger close (see Docker logs).")
+    print(f"Errors shown in Docker logs (terPRE_SEQ, temBAD_*, etc.) occur during ledger application.\n")
+
+    print(f"Submission Results (Queue Acceptance):")
     print(f"  Total Time: {results.total_time_seconds:.2f} seconds")
     print(f"  Total Transactions: {results.total_transactions}")
-    print(f"  Successful: {results.successful} ({100*results.successful/max(1,results.total_transactions):.1f}%)")
-    print(f"  Failed: {results.failed} ({100*results.failed/max(1,results.total_transactions):.1f}%)")
+    print(f"  Accepted into Queue: {results.successful} ({100*results.successful/max(1,results.total_transactions):.1f}%)")
+    print(f"  Rejected at Submit: {results.failed} ({100*results.failed/max(1,results.total_transactions):.1f}%)")
 
     if results.total_time_seconds > 0:
         tps = results.total_transactions / results.total_time_seconds
         print(f"  Throughput: {tps:.2f} tx/second")
 
-    print(f"\nResults by Transaction Type:")
-    print(f"  {'Type':<20} {'Count':>8} {'Success':>10} {'Failed':>8} {'Avg Time':>12}")
+    print(f"\nNOTE: Check Docker logs for actual transaction application results:")
+    print(f"  ./devnet/devnet-up.sh logs | grep 'Transaction failed'")
+
+    print(f"\nResults by Transaction Type (Queue Acceptance):")
+    print(f"  {'Type':<20} {'Count':>8} {'Accepted':>10} {'Rejected':>8} {'Avg Time':>12}")
     print(f"  {'-'*64}")
 
     for tx_type, type_results in sorted(results.results_by_type.items()):
         count = len(type_results)
-        success = sum(1 for r in type_results if r.success)
-        failed = count - success
+        accepted = sum(1 for r in type_results if r.success)
+        rejected = count - accepted
         avg_time = sum(r.response_time_ms for r in type_results) / max(1, count)
 
-        print(f"  {tx_type:<20} {count:>8} {success:>10} {failed:>8} {avg_time:>10.2f}ms")
+        print(f"  {tx_type:<20} {count:>8} {accepted:>10} {rejected:>8} {avg_time:>10.2f}ms")
 
     if results.errors_by_type:
         print(f"\nErrors by Type:")
