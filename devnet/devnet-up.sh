@@ -214,14 +214,23 @@ stress_devnet() {
         exit 1
     fi
 
-    # Check if devnet is running
+    # Check if devnet is running (with retry)
     local node1_ok=false
-    local response=$(curl -s -X POST "http://localhost:5005/" \
-        -H "Content-Type: application/json" \
-        -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
-    if echo "$response" | grep -q "success"; then
-        node1_ok=true
-    fi
+    local retries=3
+    local retry_count=0
+
+    while [ $retry_count -lt $retries ]; do
+        local response=$(curl -s -m 5 -X POST "http://localhost:5005/" \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
+        if echo "$response" | grep -q "success"; then
+            node1_ok=true
+            break
+        fi
+        retry_count=$((retry_count + 1))
+        log_warn "Node not responding, retrying... ($retry_count/$retries)"
+        sleep 1
+    done
 
     if [ "$node1_ok" = false ]; then
         log_error "Devnet is not running. Start it first with: $0 start"
