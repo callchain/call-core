@@ -39,35 +39,35 @@ GENESIS_WALLETS = [
         "name": "Genesis Account 1",
         "seed": "ssyB7KxAvfRwQ6mseEjt3iY1qeqMC",
         "address": "cGmJBrEfFssWuas4kCoHTX5r6aMEf6QHhy",
-        "hex_id": "a879e08e40e5ac20e33aae3ff50e9e249c382f40",
+        "hex_id": "acea885a70534357d59c30ae4f5d9de02e336530",
         "balance": "100000000000"
     },
     {
         "name": "Genesis Account 2",
         "seed": "snTHcoLdd2vwrCmNunkMZRhbfLuLs",
         "address": "c3K3xXhvsWBnP3TitQfeg2ihAuaYybvtc7",
-        "hex_id": "14e98c7547295994b1a2d756e3f1a7a20c19c9d6",
+        "hex_id": "50370298f2835f216d4f2956738e24369cbc3b77",
         "balance": "50000000000"
     },
     {
         "name": "Genesis Account 3",
         "seed": "shCQseDN6PMeeBK31bCjhQqYY4LrG",
         "address": "cHSFoKcGXFZdbB7EKmWQMTUJbr66dwfMR1",
-        "hex_id": "afd81b1e5dece82d4d7fd8e1f81f0fdc902362c8",
+        "hex_id": "b4644fcd4f991451aa69693a60b6ca7689a58548",
         "balance": "25000000000"
     },
     {
         "name": "Genesis Account 4",
         "seed": "shiWcE5Y2DJqZ2X2oLCrqYmovqz45",
         "address": "cKKeufyrSZymFeGmtF1Vhi11eCSf2i6MhR",
-        "hex_id": "c488bc92754a9238aabf29da8507cb3c7ac73da7",
+        "hex_id": "c8f96339b969bb5da024b9ab82e93460647416a7",
         "balance": "10000000000"
     },
     {
         "name": "Genesis Account 5",
         "seed": "ss1nurfhbpEnnZkDai6GTYdzT7Jqb",
         "address": "cUUsn5u9qPq7MiMiEDwdjMPsHHKyaesHPH",
-        "hex_id": "29005adf4b7eeed4beb8cc224cc94f19a57c526b",
+        "hex_id": "7abfb259dd4df0fe4f72398743542bd017a1e34b",
         "balance": "5000000000"
     }
 ]
