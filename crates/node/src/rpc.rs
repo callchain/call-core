@@ -1736,6 +1736,108 @@ impl RpcHandler for AppRpcHandler {
                 Ok(connection_result)
             }
 
+            "disconnect" => {
+                let params = params.ok_or(JsonRpcError::invalid_params())?;
+                let peer_str = params.get("peer")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing 'peer' parameter"))?;
+
+                // Parse as socket address
+                let peer_addr: SocketAddr = peer_str.parse()
+                    .map_err(|_| JsonRpcError::new(31, "Invalid peer address format. Use IP:port"))?;
+
+                let disconnect_result = if let Some(ref network_tx) = self.network_tx {
+                    match network_tx.send(network::NetworkCommand::Disconnect(peer_addr)).await {
+                        Ok(_) => {
+                            serde_json::json!({
+                                "status": "success",
+                                "message": format!("Disconnect initiated from {}", peer_addr),
+                                "peer": peer_str,
+                                "disconnected": true,
+                            })
+                        }
+                        Err(e) => {
+                            serde_json::json!({
+                                "status": "error",
+                                "message": format!("Failed to send disconnect command: {}", e),
+                                "peer": peer_str,
+                                "disconnected": false,
+                            })
+                        }
+                    }
+                } else {
+                    serde_json::json!({
+                        "status": "error",
+                        "error_code": 5020,
+                        "error_message": "Network manager not available",
+                        "message": format!("Cannot disconnect from {} - networking is disabled", peer_str),
+                        "peer": peer_str,
+                        "disconnected": false,
+                    })
+                };
+
+                Ok(disconnect_result)
+            }
+
+            "network_info" => {
+                let app = self.app.read().await;
+
+                // Get network statistics
+                let peer_count = app.overlay.active_peer_count();
+                let total_peers = app.overlay.peer_count();
+
+                // Get listening address
+                let listen_address = app.config.listen_address.to_string();
+
+                // Get RPC port
+                let rpc_port = app.config.rpc_port;
+
+                // Get ledger index
+                let ledger_index = app.consensus.get_ledger_index();
+
+                // Get validation quorum
+                let trusted_validators = app.consensus.get_trusted_validator_count();
+                let validation_quorum = (trusted_validators * 80) / 100;
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "network": {
+                        "peer_count": peer_count,
+                        "total_peer_count": total_peers,
+                        "listen_address": listen_address,
+                        "rpc_port": rpc_port,
+                        "ledger_current_index": ledger_index,
+                        "validation_quorum": validation_quorum,
+                        "build_version": env!("CARGO_PKG_VERSION"),
+                    }
+                }))
+            }
+
+            "crawler" => {
+                let app = self.app.read().await;
+
+                // Get peer information from the overlay
+                let peers = app.overlay.get_active_peers();
+                let peer_list: Vec<serde_json::Value> = peers
+                    .iter()
+                    .map(|peer| {
+                        serde_json::json!({
+                            "address": peer.address.to_string(),
+                            "node_id": peer.node_id.as_ref().map(|id| hex::encode(id.as_bytes())).unwrap_or_else(|| "unknown".to_string()),
+                            "state": format!("{:?}", peer.state),
+                        })
+                    })
+                    .collect();
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "crawler": {
+                        "discovered_peers": peer_list.len(),
+                        "peers": peer_list,
+                    }
+                }))
+            }
+
             "unl_list" => {
                 let app = self.app.read().await;
 
@@ -1786,6 +1888,76 @@ impl RpcHandler for AppRpcHandler {
                     "validators": validator_list,
                     "ledger_current_index": ledger_index,
                     "status": "success",
+                }))
+            }
+
+            "validator_info" => {
+                let app = self.app.read().await;
+
+                // Get this node's validator information if it's a validator
+                if let Some(ref seed) = app.config.validation_seed {
+                    // Derive public key from seed for display
+                    use crypto::{PrivateKey, KeyType};
+                    let private_key = if let Ok(key_bytes) = hex::decode(seed) {
+                        if key_bytes.len() == 32 {
+                            PrivateKey::from_bytes(KeyType::Secp256k1, &key_bytes)
+                        } else {
+                            let hash = crypto::sha256(seed.as_bytes());
+                            PrivateKey::from_bytes(KeyType::Secp256k1, &hash)
+                        }
+                    } else {
+                        let hash = crypto::sha256(seed.as_bytes());
+                        PrivateKey::from_bytes(KeyType::Secp256k1, &hash)
+                    };
+
+                    if let Some(pk) = private_key {
+                        let public_key = pk.to_public_key();
+                        let ledger_index = app.consensus.get_ledger_index();
+
+                        Ok(serde_json::json!({
+                            "status": "success",
+                            "validator": {
+                                "validation_public_key": hex::encode(public_key.as_bytes()),
+                                "is_validator": true,
+                                "ledger_current_index": ledger_index,
+                            }
+                        }))
+                    } else {
+                        Ok(serde_json::json!({
+                            "status": "error",
+                            "error": "Invalid validator seed",
+                            "error_code": 6001,
+                        }))
+                    }
+                } else {
+                    Ok(serde_json::json!({
+                        "status": "error",
+                        "error": "Node is not configured as a validator",
+                        "error_code": 6000,
+                    }))
+                }
+            }
+
+            "validation_quorum" => {
+                let app = self.app.read().await;
+
+                let trusted_validators = app.consensus.get_trusted_validator_count();
+                let ledger_index = app.consensus.get_ledger_index();
+                // Default quorum is 80% of trusted validators
+                let quorum = (trusted_validators * 80) / 100;
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "quorum": {
+                        "validation_quorum": quorum,
+                        "trusted_validator_count": trusted_validators,
+                        "ledger_current_index": ledger_index,
+                        "quorum_ratio": if trusted_validators > 0 {
+                            format!("{:.0}%", (quorum as f64 / trusted_validators as f64) * 100.0)
+                        } else {
+                            "0%".to_string()
+                        },
+                    }
                 }))
             }
 

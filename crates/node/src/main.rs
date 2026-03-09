@@ -163,6 +163,62 @@ enum Commands {
         #[arg(short, long)]
         tx: String,
     },
+
+    /// Network related commands
+    #[command(subcommand)]
+    Net(NetCommands),
+
+    /// Validator related commands
+    #[command(subcommand)]
+    Validator(ValidatorCommands),
+
+    /// Show server information
+    ServerInfo,
+}
+
+/// Network related subcommands
+#[derive(Subcommand)]
+enum NetCommands {
+    /// List all connected peers
+    Peers,
+
+    /// Show network crawler information (discovered nodes)
+    Crawler,
+
+    /// Connect to a specific peer
+    Connect {
+        /// Peer address in format host:port
+        address: String,
+    },
+
+    /// Disconnect from a peer
+    Disconnect {
+        /// Peer address or ID
+        peer: String,
+    },
+
+    /// Show network status and statistics
+    Status,
+}
+
+/// Validator related subcommands
+#[derive(Subcommand)]
+enum ValidatorCommands {
+    /// Show validator information (if running as validator)
+    Info,
+
+    /// Create/Initialize validator keys (for new validators)
+    Create {
+        /// Save validator keys to file
+        #[arg(short, long)]
+        save: Option<PathBuf>,
+    },
+
+    /// List known validators in the network
+    List,
+
+    /// Show validation quorum information
+    Quorum,
 }
 
 #[tokio::main]
@@ -240,6 +296,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::AccountInfo { account }) => {
             show_account_info(&config, &account).await?;
+        }
+        Some(Commands::Net(net_cmd)) => {
+            handle_net_command(&config, net_cmd).await?;
+        }
+        Some(Commands::Validator(val_cmd)) => {
+            handle_validator_command(&config, val_cmd).await?;
+        }
+        Some(Commands::ServerInfo) => {
+            show_server_info(&config).await?;
         }
         _ => {
             // Default: start the node
@@ -733,6 +798,82 @@ fn sign_transaction_local(key: &str, tx: &str) -> anyhow::Result<()> {
     println!("TxBlob: {}", tx_blob);
     println!("\nTo submit:");
     println!("  ./target/release/calld submit {}", tx_blob);
+
+    Ok(())
+}
+
+/// Handle network related subcommands
+async fn handle_net_command(config: &Config, cmd: NetCommands) -> anyhow::Result<()> {
+    let rpc_url = format!("http://127.0.0.1:{}", config.rpc_port);
+
+    match cmd {
+        NetCommands::Peers => {
+            let result = rpc_request(&rpc_url, "peers", None).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        NetCommands::Crawler => {
+            let result = rpc_request(&rpc_url, "crawler", None).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        NetCommands::Connect { address } => {
+            let params = serde_json::json!({ "address": address });
+            let result = rpc_request(&rpc_url, "connect", Some(params)).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        NetCommands::Disconnect { peer } => {
+            let params = serde_json::json!({ "peer": peer });
+            let result = rpc_request(&rpc_url, "disconnect", Some(params)).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        NetCommands::Status => {
+            let result = rpc_request(&rpc_url, "network_info", None).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle validator related subcommands
+async fn handle_validator_command(config: &Config, cmd: ValidatorCommands) -> anyhow::Result<()> {
+    let rpc_url = format!("http://127.0.0.1:{}", config.rpc_port);
+
+    match cmd {
+        ValidatorCommands::Info => {
+            let result = rpc_request(&rpc_url, "validator_info", None).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        ValidatorCommands::Create { save } => {
+            // Generate new validation seed
+            let result = rpc_request(&rpc_url, "validation_create", None).await?;
+
+            if let Some(path) = save {
+                let json_str = serde_json::to_string_pretty(&result)?;
+                std::fs::write(&path, json_str)?;
+                println!("Validator keys saved to: {}", path.display());
+            }
+
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        ValidatorCommands::List => {
+            let result = rpc_request(&rpc_url, "validators", None).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        ValidatorCommands::Quorum => {
+            let result = rpc_request(&rpc_url, "validation_quorum", None).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+    }
+
+    Ok(())
+}
+
+/// Show server information
+async fn show_server_info(config: &Config) -> anyhow::Result<()> {
+    let rpc_url = format!("http://127.0.0.1:{}", config.rpc_port);
+
+    let result = rpc_request(&rpc_url, "server_info", None).await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
 
     Ok(())
 }

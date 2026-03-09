@@ -1874,13 +1874,32 @@ impl Application {
     pub fn get_server_info(&self) -> serde_json::Value {
         let consensus_state = self.consensus.get_phase();
         let peer_count = self.overlay.active_peer_count();
+        let ledger_index = self.consensus.get_ledger_index();
+
+        // Get the winning ledger hash from consensus if available
+        let winning_ledger = self.consensus.get_winning_ledger();
+        let validated_hash = winning_ledger
+            .map(|h| hex::encode(h.as_bytes()))
+            .unwrap_or_else(|| hex::encode(self.current_ledger_hash.as_bytes()));
+
+        // Calculate complete ledgers range
+        let complete_ledgers = if ledger_index > 0 {
+            format!("1-{}", ledger_index)
+        } else {
+            "empty".to_string()
+        };
+
+        // Get validation count for current ledger
+        let validation_count = winning_ledger
+            .map(|h| self.consensus.get_validation_count(h))
+            .unwrap_or(0);
 
         serde_json::json!({
             "info": {
                 "build_version": env!("CARGO_PKG_VERSION"),
-                "complete_ledgers": "empty",
+                "complete_ledgers": complete_ledgers,
                 "io_latency_ms": 1,
-                "load_factor": 1,
+                "load_factor": self.tx_queue.len().max(1) as u32,
                 "peers": peer_count,
                 "server_state": format!("{:?}", self.state),
                 "state_accounting": {
@@ -1892,11 +1911,13 @@ impl Application {
                 },
                 "uptime": 0,
                 "validated_ledger": {
-                    "hash": "0000000000000000000000000000000000000000000000000000000000000000",
-                    "seq": 0,
+                    "hash": validated_hash,
+                    "seq": ledger_index,
                 },
-                "node_id": format!("{:?}", self.node_id),
+                "node_id": hex::encode(self.node_id.as_bytes()),
                 "consensus_phase": format!("{:?}", consensus_state),
+                "validation_count": validation_count,
+                "pending_transactions": self.tx_queue.len(),
             }
         })
     }
