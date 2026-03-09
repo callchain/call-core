@@ -43,3 +43,7 @@ path = "src/main.rs"
 [[bin]]
 name = "calld-sign"
 path = "src/sign_cli.rs"
+
+[[bin]]
+name = "calld-verify"
+path = "src/verify_cli.rs"

@@ -265,6 +265,7 @@ impl Serializer {
             sf::HIGH_LIMIT,
             sf::TAKER_PAYS,
             sf::TAKER_GETS,
+            sf::TOTAL_SUPPLY,
             sf::BALANCE,
             sf::AMOUNT,
             sf::LIMIT_AMOUNT,
@@ -608,6 +609,32 @@ impl<'a> SerialIter<'a> {
 
     pub fn set_position(&mut self, pos: u64) {
         self.cursor.set_position(pos);
+    }
+
+    /// Skip a field of the given type without reading its value
+    pub fn skip_field(&mut self, type_id: i16) -> Result<(), SerializeError> {
+        use crate::types::SerializedTypeID;
+
+        match SerializedTypeID::try_from(type_id) {
+            Ok(SerializedTypeID::UInt8) => { self.get8()?; }
+            Ok(SerializedTypeID::UInt16) => { self.get16()?; }
+            Ok(SerializedTypeID::UInt32) => { self.get32()?; }
+            Ok(SerializedTypeID::UInt64) => { self.get64()?; }
+            Ok(SerializedTypeID::Hash128) => { self.get128()?; }
+            Ok(SerializedTypeID::Hash160) => { self.get160()?; }
+            Ok(SerializedTypeID::Hash256) => { self.get256()?; }
+            Ok(SerializedTypeID::VL) => { self.get_vl()?; }
+            Ok(SerializedTypeID::Amount) => { self.get_amount()?; }
+            Ok(SerializedTypeID::Account) => { self.get_account()?; }
+            Ok(SerializedTypeID::Object) | Ok(SerializedTypeID::Array) => {
+                // For nested objects/arrays, we need to parse them to skip properly
+                return Err(SerializeError::InvalidType);
+            }
+            _ => {
+                return Err(SerializeError::InvalidType);
+            }
+        }
+        Ok(())
     }
 
     /// Parse an STObject from the serialized data.

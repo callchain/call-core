@@ -233,6 +233,26 @@ pub fn sign_transaction_local(
     })
 }
 
+/// Convert AccountID to Callchain address (base58 with checksum)
+fn account_to_address(account: &AccountID) -> String {
+    use sha2::{Sha256, Digest};
+
+    // Add version byte
+    let mut data = vec![0x00u8]; // ADDRESS_VERSION for Callchain
+    data.extend_from_slice(account.as_bytes());
+
+    // Calculate checksum (first 4 bytes of double SHA256)
+    let hash1 = Sha256::digest(&data);
+    let hash2 = Sha256::digest(&hash1);
+    let checksum = &hash2[..4];
+
+    // Append checksum
+    data.extend_from_slice(checksum);
+
+    // Base58 encode
+    crypto::base58::encode(&data)
+}
+
 /// Parse account from string (base58 or hex)
 pub fn parse_account(account_str: &str) -> Result<AccountID, String> {
     // Try hex (40 chars)
@@ -299,4 +319,252 @@ fn compute_tx_hash(tx_blob: &[u8]) -> String {
     use crypto::sha512_half;
     let hash = sha512_half(tx_blob);
     hex::encode(hash.as_bytes())
+}
+
+/// Result of verifying a transaction signature
+#[derive(Debug, Clone)]
+pub struct VerifyResult {
+    pub valid: bool,
+    pub tx_hash: String,
+    pub account: String,
+    pub sequence: u32,
+    pub tx_type: String,
+    pub error: Option<String>,
+}
+
+/// Verify a transaction signature from tx_blob
+///
+/// This function extracts the transaction from the blob, reconstructs
+/// the signing hash, and verifies the signature.
+pub fn verify_transaction_blob(tx_blob_hex: &str) -> Result<VerifyResult, String> {
+    // Decode tx_blob
+    let tx_blob = hex::decode(tx_blob_hex).map_err(|_| "Invalid tx_blob hex")?;
+
+    // Parse the transaction blob to extract fields
+    // The blob is a serialized STObject - we need to deserialize it
+    let (account, sequence, tx_type, signing_pub_key, txn_signature) =
+        parse_tx_blob_fields(&tx_blob)?;
+
+    // Get the signing public key
+    let pk_bytes = match signing_pub_key {
+        Some(pk) => pk,
+        None => return Ok(VerifyResult {
+            valid: false,
+            tx_hash: hex::encode(&crypto::sha512_half(&tx_blob).as_bytes()),
+            account: account.unwrap_or_else(|| "unknown".to_string()),
+            sequence: sequence.unwrap_or(0),
+            tx_type: tx_type.unwrap_or_else(|| "unknown".to_string()),
+            error: Some("Missing SigningPubKey".to_string()),
+        }),
+    };
+
+    // Get the signature
+    let sig_bytes = match txn_signature {
+        Some(sig) => sig,
+        None => return Ok(VerifyResult {
+            valid: false,
+            tx_hash: hex::encode(&crypto::sha512_half(&tx_blob).as_bytes()),
+            account: account.unwrap_or_else(|| "unknown".to_string()),
+            sequence: sequence.unwrap_or(0),
+            tx_type: tx_type.unwrap_or_else(|| "unknown".to_string()),
+            error: Some("Missing TxnSignature".to_string()),
+        }),
+    };
+
+    // Determine key type from public key length
+    let key_type = if pk_bytes.len() == 33 {
+        crypto::KeyType::Secp256k1
+    } else if pk_bytes.len() == 32 {
+        crypto::KeyType::Ed25519
+    } else {
+        return Ok(VerifyResult {
+            valid: false,
+            tx_hash: hex::encode(&crypto::sha512_half(&tx_blob).as_bytes()),
+            account: account.clone().unwrap_or_else(|| "unknown".to_string()),
+            sequence: sequence.unwrap_or(0),
+            tx_type: tx_type.clone().unwrap_or_else(|| "unknown".to_string()),
+            error: Some(format!("Invalid public key length: {}", pk_bytes.len())),
+        });
+    };
+
+    // Create public key
+    let public_key = match crypto::PublicKey::from_bytes(key_type, &pk_bytes) {
+        Some(pk) => pk,
+        None => {
+            return Ok(VerifyResult {
+                valid: false,
+                tx_hash: hex::encode(&crypto::sha512_half(&tx_blob).as_bytes()),
+                account: account.clone().unwrap_or_else(|| "unknown".to_string()),
+                sequence: sequence.unwrap_or(0),
+                tx_type: tx_type.clone().unwrap_or_else(|| "unknown".to_string()),
+                error: Some("Invalid public key".to_string()),
+            })
+        }
+    };
+
+    // Create signature
+    let signature = crypto::Signature::new(key_type, sig_bytes);
+
+    // Build the signing data from the tx_blob (reconstructs what was signed)
+    // This returns the raw sign_data (prefix + serialized_tx_without_TxnSignature)
+    let sign_data = match compute_signing_data_from_blob(&tx_blob) {
+        Ok(data) => data,
+        Err(e) => {
+            return Ok(VerifyResult {
+                valid: false,
+                tx_hash: hex::encode(&crypto::sha512_half(&tx_blob).as_bytes()),
+                account: account.clone().unwrap_or_else(|| "unknown".to_string()),
+                sequence: sequence.unwrap_or(0),
+                tx_type: tx_type.clone().unwrap_or_else(|| "unknown".to_string()),
+                error: Some(format!("Failed to compute signing data: {}", e)),
+            })
+        }
+    };
+
+    // Verify the signature using the raw sign_data
+    // The verify function will hash the data internally with SHA256
+    let valid = public_key.verify(&sign_data, &signature);
+
+    Ok(VerifyResult {
+        valid,
+        tx_hash: hex::encode(&crypto::sha512_half(&tx_blob).as_bytes()),
+        account: account.unwrap_or_else(|| "unknown".to_string()),
+        sequence: sequence.unwrap_or(0),
+        tx_type: tx_type.unwrap_or_else(|| "unknown".to_string()),
+        error: if valid { None } else { Some("Signature verification failed".to_string()) },
+    })
+}
+
+/// Parse transaction blob to extract key fields
+fn parse_tx_blob_fields(tx_blob: &[u8]) -> Result<
+    (Option<String>, Option<u32>, Option<String>, Option<Vec<u8>>, Option<Vec<u8>>),
+    String
+> {
+    use serialization::SerialIter;
+
+    let mut iter = SerialIter::new(tx_blob);
+
+    let mut account = None;
+    let mut sequence = None;
+    let mut tx_type = None;
+    let mut signing_pub_key = None;
+    let mut txn_signature = None;
+
+    while !iter.eof() {
+        let field_id = iter.get_field_id()
+            .map_err(|e| format!("Failed to read field ID: {}", e))?;
+
+        // Check for object end marker (type 14, field 1)
+        if field_id.0 == 14 && field_id.1 == 1 {
+            break;
+        }
+
+        match (field_id.0, field_id.1) {
+            // TransactionType (type=1, field=2)
+            (1, 2) => {
+                let val = iter.get16()
+                    .map_err(|e| format!("Failed to read tx type: {}", e))?;
+                tx_type = Some(match val {
+                    0 => "Payment",
+                    3 => "AccountSet",
+                    5 => "SetRegularKey",
+                    6 => "NicknameSet",
+                    7 => "OfferCreate",
+                    8 => "OfferCancel",
+                    12 => "SignerListSet",
+                    16 => "IssueSet",
+                    19 => "DepositPreauth",
+                    20 => "TrustSet",
+                    _ => "Unknown",
+                }.to_string());
+            }
+            // Account (type=8, field=1)
+            (8, 1) => {
+                let acc = iter.get_account()
+                    .map_err(|e| format!("Failed to read account: {}", e))?;
+                // Convert AccountID to Callchain address with version and checksum
+                let addr = account_to_address(&acc);
+                account = Some(addr);
+            }
+            // Sequence (type=2, field=4)
+            (2, 4) => {
+                sequence = Some(iter.get32()
+                    .map_err(|e| format!("Failed to read sequence: {}", e))?);
+            }
+            // SigningPubKey (type=7, field=3)
+            (7, 3) => {
+                signing_pub_key = Some(iter.get_vl()
+                    .map_err(|e| format!("Failed to read signing pub key: {}", e))?);
+            }
+            // TxnSignature (type=7, field=4)
+            (7, 4) => {
+                txn_signature = Some(iter.get_vl()
+                    .map_err(|e| format!("Failed to read txn signature: {}", e))?);
+            }
+            // Skip other fields
+            _ => {
+                iter.skip_field(field_id.0)
+                    .map_err(|e| format!("Failed to skip field: {}", e))?;
+            }
+        }
+    }
+
+    Ok((account, sequence, tx_type, signing_pub_key, txn_signature))
+}
+
+/// Compute the signing data from a transaction blob
+/// This parses the blob, finds and removes TxnSignature, then returns the data to be signed
+/// Note: SigningPubKey IS included (only TxnSignature is excluded)
+fn compute_signing_data_from_blob(tx_blob: &[u8]) -> Result<Vec<u8>, String> {
+    use crypto::HashPrefix;
+    use serialization::SerialIter;
+
+    // Parse to find TxnSignature position
+    let mut iter = SerialIter::new(tx_blob);
+    let mut txn_signature_start: Option<usize> = None;
+    let mut txn_signature_end: Option<usize> = None;
+
+    while !iter.eof() {
+        let pos = iter.position() as usize;
+
+        let field_id = iter.get_field_id()
+            .map_err(|e| format!("Failed to read field ID: {}", e))?;
+
+        // Check for object end marker (type 14, field 1)
+        if field_id.0 == 14 && field_id.1 == 1 {
+            break;
+        }
+
+        // TxnSignature (type=7, field=4)
+        if field_id.0 == 7 && field_id.1 == 4 {
+            txn_signature_start = Some(pos);
+            iter.get_vl().map_err(|e| format!("Failed to read TxnSignature: {}", e))?;
+            txn_signature_end = Some(iter.position() as usize);
+        } else {
+            // Skip other fields (including SigningPubKey which IS part of the hash)
+            iter.skip_field(field_id.0)
+                .map_err(|e| format!("Failed to skip field: {}", e))?;
+        }
+    }
+
+    // Build the serialized data without TxnSignature only
+    let serialized = if let (Some(start), Some(end)) = (txn_signature_start, txn_signature_end) {
+        // Concatenate: before TxnSignature + after TxnSignature
+        let mut result = Vec::with_capacity(tx_blob.len() - (end - start));
+        result.extend_from_slice(&tx_blob[..start]);
+        result.extend_from_slice(&tx_blob[end..]);
+        result
+    } else {
+        // No TxnSignature found - use whole blob
+        tx_blob.to_vec()
+    };
+
+    // Create signing payload: HashPrefix + serialized tx
+    let prefix = HashPrefix::TxSign.as_bytes();
+    let mut sign_data = Vec::with_capacity(prefix.len() + serialized.len());
+    sign_data.extend_from_slice(prefix);
+    sign_data.extend_from_slice(&serialized);
+
+    // Return the raw sign_data (not the hash)
+    Ok(sign_data)
 }
