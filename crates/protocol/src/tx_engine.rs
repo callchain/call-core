@@ -1065,87 +1065,102 @@ impl TransactionEngine {
     }
 
     /// Get the hash of transaction data that should be signed
+    /// This MUST match exactly how calld-sign computes the signing hash in signing.rs
     fn get_transaction_signing_hash(&self, tx: &Transaction) -> UInt256 {
         use crypto::sha512_half;
         use crypto::HashPrefix;
         use serialization::{Serializer, STObject, STValue};
         use serialization::types::sf;
 
-        // Build signing data using the same format as transaction_signer.rs:
-        // HashPrefix::TxSign + serialized STObject (without signature fields)
+        // Build STObject from transaction - field order MUST match signing.rs exactly:
+        // 1. Common fields: TransactionType, Account, Sequence, Fee, Flags, SourceTag
+        // 2. Transaction-specific fields (varies by type)
+        // 3. SigningPubKey (ALWAYS added last, before signing)
 
-        // Build STObject from transaction
         let mut obj = STObject::new();
 
-        // TransactionType
+        // TransactionType (field code 2)
         obj.insert(sf::TRANSACTION_TYPE, STValue::UInt16(tx.tx_type as u16));
 
-        // Account
+        // Account (field code 1)
         obj.insert(sf::ACCOUNT, STValue::Account(tx.account));
 
-        // Sequence
+        // Sequence (field code 4)
         obj.insert(sf::SEQUENCE, STValue::UInt32(tx.sequence));
 
-        // Fee
+        // Fee (field code 8)
         obj.insert(sf::FEE, STValue::Amount(serialization::Amount::call(tx.fee)));
 
-        // Flags (optional)
+        // Flags (optional, field code 2)
         if let Some(flags) = tx.flags {
             obj.insert(sf::FLAGS, STValue::UInt32(flags));
         }
 
-        // SourceTag (optional)
+        // SourceTag (optional, field code 3)
         if let Some(tag) = tx.source_tag {
             obj.insert(sf::SOURCE_TAG, STValue::UInt32(tag));
         }
 
-        // Transaction-specific fields
+        // Transaction-specific fields - MUST match signing.rs order exactly
         match tx.tx_type {
             TxType::Payment => {
+                // Destination (field code 3)
                 if let Some(dest) = &tx.destination {
                     obj.insert(sf::DESTINATION, STValue::Account(*dest));
                 }
+                // Amount (field code 6)
                 if let Some(amt) = &tx.amount {
                     obj.insert(sf::AMOUNT, STValue::Amount(*amt));
                 }
+                // DestinationTag (field code 14)
                 if let Some(tag) = tx.destination_tag {
                     obj.insert(sf::DESTINATION_TAG, STValue::UInt32(tag));
                 }
             }
             TxType::TrustSet => {
+                // LimitAmount (field code 89)
                 if let Some(limit) = &tx.limit_amount {
                     obj.insert(sf::LIMIT_AMOUNT, STValue::Amount(*limit));
                 }
             }
             TxType::OfferCreate => {
+                // TakerPays (field code 84)
                 if let Some(pays) = &tx.taker_pays {
                     obj.insert(sf::TAKER_PAYS, STValue::Amount(*pays));
                 }
+                // TakerGets (field code 85)
                 if let Some(gets) = &tx.taker_gets {
                     obj.insert(sf::TAKER_GETS, STValue::Amount(*gets));
                 }
             }
             TxType::OfferCancel => {
+                // OfferSequence (field code 82)
                 obj.insert(sf::OFFER_SEQUENCE, STValue::UInt32(tx.offer_sequence));
             }
             TxType::AccountSet => {
+                // Domain (field code 7)
                 if let Some(domain) = &tx.domain {
                     obj.insert(sf::DOMAIN, STValue::VL(domain.clone()));
                 }
+                // SetFlag (field code 33)
                 if let Some(flag) = tx.set_flag {
                     obj.insert(sf::SET_FLAG, STValue::UInt32(flag));
                 }
+                // ClearFlag (field code 34)
                 if let Some(flag) = tx.clear_flag {
                     obj.insert(sf::CLEAR_FLAG, STValue::UInt32(flag));
                 }
             }
             TxType::SetRegularKey => {
+                // RegularKey (field code 75)
                 if let Some(key) = &tx.regular_key {
                     obj.insert(sf::REGULAR_KEY, STValue::Account(*key));
                 }
             }
             TxType::SignerListSet => {
+                // SignerQuorum (field code 35)
                 obj.insert(sf::SIGNER_QUORUM, STValue::UInt32(tx.signer_quorum));
+                // SignerEntries (field code 57)
                 if !tx.signers.is_empty() {
                     let signer_values: Vec<STValue> = tx.signers.iter().map(|s| {
                         let mut signer_obj = STObject::new();
@@ -1157,9 +1172,8 @@ impl TransactionEngine {
                 }
             }
             TxType::NicknameSet => {
+                // Nickname (field code 18) - serialized as Hash256
                 if let Some(nickname) = &tx.nickname {
-                    // Nickname is stored as Vec<u8> but serialized as Hash256
-                    // Convert Vec<u8> back to UInt256 for signature verification
                     if nickname.len() == 32 {
                         let bytes: [u8; 32] = nickname.as_slice().try_into().unwrap();
                         obj.insert(sf::NICKNAME, STValue::Hash256(primitives::UInt256::new(bytes)));
@@ -1167,16 +1181,17 @@ impl TransactionEngine {
                 }
             }
             TxType::DepositPreauth => {
-                // For authorize: use destination field
+                // Authorize (field code 90)
                 if let Some(dest) = &tx.destination {
                     obj.insert(sf::AUTHORIZE, STValue::Account(*dest));
                 }
-                // For unauthorize: use unauthorize field
+                // Unauthorize (field code 91)
                 if let Some(unauth) = &tx.unauthorize {
                     obj.insert(sf::UNAUTHORIZE, STValue::Account(*unauth));
                 }
             }
             TxType::IssueSet => {
+                // TotalSupply (field code 89)
                 if let Some(supply) = &tx.total_supply {
                     obj.insert(sf::TOTAL_SUPPLY, STValue::Amount(*supply));
                 }
@@ -1184,7 +1199,8 @@ impl TransactionEngine {
             _ => {}
         }
 
-        // SigningPubKey (required for signature verification)
+        // SigningPubKey (field code 3) - MUST be added AFTER all transaction-specific fields
+        // This matches signing.rs where SigningPubKey is added at line 193
         if let Some(ref pk) = tx.signing_pub_key {
             obj.insert(sf::SIGNING_PUB_KEY, STValue::VL(pk.clone()));
         }
@@ -1202,7 +1218,7 @@ impl TransactionEngine {
         sign_data.extend_from_slice(prefix);
         sign_data.extend_from_slice(&serialized_tx);
 
-        // Return hash of signing data
+        // Compute and return SHA-512 half hash
         sha512_half(&sign_data)
     }
 }
