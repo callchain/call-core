@@ -173,6 +173,179 @@ clean_devnet() {
     log_success "Dev testnet cleaned up"
 }
 
+# ========================
+# Single Node Functions
+# ========================
+
+# Start single node for transaction type testing
+start_single() {
+    log_info "Starting Call-core single node..."
+
+    check_docker
+
+    # Setup single node directory
+    mkdir -p "$DEVNET_DIR/node-single/data"
+
+    # Check if image exists, if not build it
+    if ! docker images callchain/call-core:latest --format "{{.Repository}}" | grep -q "callchain/call-core"; then
+        log_warn "Docker image not found. Building..."
+        "$PROJECT_ROOT/scripts/docker-build.sh"
+    fi
+
+    local compose_cmd=$(get_compose_cmd)
+
+    cd "$DEVNET_DIR"
+    $compose_cmd -f docker-compose.single.yml up -d
+
+    log_success "Single node started!"
+    echo ""
+    log_info "Node status:"
+    $compose_cmd -f docker-compose.single.yml ps
+
+    echo ""
+    log_info "RPC Endpoint: http://localhost:5005"
+    log_info "Use '$0 single stop' to stop the node"
+    log_info "Use '$0 single test' to run transaction type tests"
+    log_info "Use '$0 single logs' to view logs"
+}
+
+# Stop single node
+stop_single() {
+    log_info "Stopping Call-core single node..."
+
+    check_docker
+
+    local compose_cmd=$(get_compose_cmd)
+    cd "$DEVNET_DIR"
+    $compose_cmd -f docker-compose.single.yml down
+
+    log_success "Single node stopped"
+}
+
+# Clean single node
+clean_single() {
+    log_warn "This will remove single node data directory"
+    read -p "Are you sure? (y/N) " confirm
+
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        log_info "Cancelled"
+        exit 0
+    fi
+
+    log_info "Cleaning up single node..."
+
+    check_docker
+
+    local compose_cmd=$(get_compose_cmd)
+    cd "$DEVNET_DIR"
+    $compose_cmd -f docker-compose.single.yml down -v
+
+    # Remove data directory
+    rm -rf "$DEVNET_DIR/node-single/data"
+
+    log_success "Single node cleaned up"
+}
+
+# Show single node status
+status_single() {
+    check_docker
+
+    local compose_cmd=$(get_compose_cmd)
+    cd "$DEVNET_DIR"
+    $compose_cmd -f docker-compose.single.yml ps
+}
+
+# Show single node logs
+logs_single() {
+    check_docker
+
+    local compose_cmd=$(get_compose_cmd)
+    cd "$DEVNET_DIR"
+    $compose_cmd -f docker-compose.single.yml logs -f
+}
+
+# Test single node connectivity
+test_single_connectivity() {
+    log_info "Testing single node connectivity..."
+
+    # Test RPC endpoint
+    echo -n "  Testing node on port 5005... "
+
+    local retries=5
+    local retry_count=0
+    local node_ok=false
+
+    while [ $retry_count -lt $retries ]; do
+        response=$(curl -s -m 3 -X POST "http://localhost:5005/" \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
+
+        if echo "$response" | grep -q "success"; then
+            node_ok=true
+            break
+        fi
+
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $retries ]; then
+            sleep 1
+        fi
+    done
+
+    if [ "$node_ok" = true ]; then
+        echo -e "${GREEN}OK${NC}"
+    else
+        echo -e "${RED}FAILED${NC}"
+        return 1
+    fi
+
+    # Get server info
+    echo ""
+    log_info "Server info:"
+    curl -s -X POST "http://localhost:5005/" \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"server_info","id":1}' | \
+        python3 -m json.tool 2>/dev/null || cat
+}
+
+# Run transaction type tests on single node
+test_single_transactions() {
+    log_info "Running transaction type tests on single node..."
+
+    # Check if Python is available
+    if ! command -v python3 &> /dev/null; then
+        log_error "Python3 is required for testing"
+        exit 1
+    fi
+
+    # Check if node is running
+    local node_ok=false
+    local retries=3
+    local retry_count=0
+
+    while [ $retry_count -lt $retries ]; do
+        local response=$(curl -s -m 5 -X POST "http://localhost:5005/" \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
+        if echo "$response" | grep -q "success"; then
+            node_ok=true
+            break
+        fi
+        retry_count=$((retry_count + 1))
+        log_warn "Node not responding, retrying... ($retry_count/$retries)"
+        sleep 1
+    done
+
+    if [ "$node_ok" = false ]; then
+        log_error "Single node is not running. Start it first with: $0 single start"
+        exit 1
+    fi
+
+    # Run the test script
+    python3 "$DEVNET_DIR/test_all_types.py" --url http://localhost:5005
+
+    return $?
+}
+
 # Quick test of the devnet
 test_devnet() {
     log_info "Testing devnet connectivity..."
@@ -316,12 +489,20 @@ print_usage() {
     echo "  clean       Remove all data and stop the devnet"
     echo "  test        Test the devnet connectivity"
     echo "  stress      Run stress tests [type] [iterations] [threads]"
+    echo "  single      Single node commands (start|stop|test|logs|clean)"
     echo "  help        Show this help message"
     echo ""
     echo "Stress Test Types:"
     echo "  full        Comprehensive transaction testing (default)"
     echo "  simple      Basic RPC endpoint testing only"
     echo "  all         Run both simple and full tests"
+    echo ""
+    echo "Single Node Commands:"
+    echo "  single start  Start single node for transaction testing"
+    echo "  single stop   Stop single node"
+    echo "  single test   Test all transaction types (one per type)"
+    echo "  single logs   View single node logs"
+    echo "  single clean  Clean single node data"
     echo ""
     echo "Examples:"
     echo "  $0 start                      # Start the devnet"
@@ -332,6 +513,9 @@ print_usage() {
     echo "  $0 stress full 100 8          # Run full test: 100 iterations, 8 threads"
     echo "  $0 stress simple 500          # Run simple RPC test: 500 iterations"
     echo "  $0 stress all 50              # Run both tests with 50 iterations"
+    echo "  $0 single start               # Start single node"
+    echo "  $0 single test                # Test all transaction types"
+    echo "  $0 single stop                # Stop single node"
     echo "  $0 clean                      # Clean up everything"
 }
 
@@ -360,6 +544,36 @@ case "${1:-start}" in
         ;;
     stress)
         stress_devnet "$2" "$3" "$4"
+        ;;
+    single)
+        case "${2:-test}" in
+            start|up)
+                start_single
+                ;;
+            stop|down)
+                stop_single
+                ;;
+            status|ps)
+                status_single
+                ;;
+            logs)
+                logs_single
+                ;;
+            clean)
+                clean_single
+                ;;
+            test|txtest)
+                test_single_transactions
+                ;;
+            ping)
+                test_single_connectivity
+                ;;
+            *)
+                log_error "Unknown single command: $2"
+                echo "Valid single commands: start, stop, test, logs, clean, status, ping"
+                exit 1
+                ;;
+        esac
         ;;
     help|-h|--help)
         print_usage
