@@ -294,6 +294,93 @@ impl AppRpcHandler {
             }
         }
 
+        // Extract and add TakerPays (for OfferCreate)
+        if let Some(taker_pays_val) = tx_json.get("TakerPays") {
+            if let Some(taker_pays_str) = taker_pays_val.as_str() {
+                // Native CALL amount
+                let pays_drops: u64 = taker_pays_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid TakerPays"))?;
+                let pays = serialization::types::Amount::call(pays_drops);
+                obj.insert(sf::TAKER_PAYS, STValue::Amount(pays));
+            } else if let Some(taker_pays_obj) = taker_pays_val.as_object() {
+                // Issued currency
+                let value = taker_pays_obj.get("value").and_then(|v| v.as_str())
+                    .or_else(|| taker_pays_obj.get("Value").and_then(|v| v.as_str()))
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing TakerPays.value"))?;
+                let currency = taker_pays_obj.get("currency").and_then(|v| v.as_str())
+                    .or_else(|| taker_pays_obj.get("Currency").and_then(|v| v.as_str()))
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing TakerPays.currency"))?;
+                let issuer = taker_pays_obj.get("issuer").and_then(|v| v.as_str())
+                    .or_else(|| taker_pays_obj.get("Issuer").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                let pays = parse_issued_amount(value, currency, issuer)?;
+                obj.insert(sf::TAKER_PAYS, STValue::Amount(pays));
+            }
+        }
+
+        // Extract and add TakerGets (for OfferCreate)
+        if let Some(taker_gets_val) = tx_json.get("TakerGets") {
+            if let Some(taker_gets_str) = taker_gets_val.as_str() {
+                // Native CALL amount
+                let gets_drops: u64 = taker_gets_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid TakerGets"))?;
+                let gets = serialization::types::Amount::call(gets_drops);
+                obj.insert(sf::TAKER_GETS, STValue::Amount(gets));
+            } else if let Some(taker_gets_obj) = taker_gets_val.as_object() {
+                // Issued currency
+                let value = taker_gets_obj.get("value").and_then(|v| v.as_str())
+                    .or_else(|| taker_gets_obj.get("Value").and_then(|v| v.as_str()))
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing TakerGets.value"))?;
+                let currency = taker_gets_obj.get("currency").and_then(|v| v.as_str())
+                    .or_else(|| taker_gets_obj.get("Currency").and_then(|v| v.as_str()))
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing TakerGets.currency"))?;
+                let issuer = taker_gets_obj.get("issuer").and_then(|v| v.as_str())
+                    .or_else(|| taker_gets_obj.get("Issuer").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                let gets = parse_issued_amount(value, currency, issuer)?;
+                obj.insert(sf::TAKER_GETS, STValue::Amount(gets));
+            }
+        }
+
+        // Extract and add TotalSupply (for IssueSet)
+        if let Some(total_supply_val) = tx_json.get("TotalSupply") {
+            if let Some(total_supply_str) = total_supply_val.as_str() {
+                // Native CALL amount
+                let supply_drops: u64 = total_supply_str.parse().map_err(|_| JsonRpcError::new(31, "Invalid TotalSupply"))?;
+                let supply = serialization::types::Amount::call(supply_drops);
+                obj.insert(sf::TOTAL_SUPPLY, STValue::Amount(supply));
+            } else if let Some(total_supply_obj) = total_supply_val.as_object() {
+                // Issued currency
+                let value = total_supply_obj.get("value").and_then(|v| v.as_str())
+                    .or_else(|| total_supply_obj.get("Value").and_then(|v| v.as_str()))
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing TotalSupply.value"))?;
+                let currency = total_supply_obj.get("currency").and_then(|v| v.as_str())
+                    .or_else(|| total_supply_obj.get("Currency").and_then(|v| v.as_str()))
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing TotalSupply.currency"))?;
+                let issuer = total_supply_obj.get("issuer").and_then(|v| v.as_str())
+                    .or_else(|| total_supply_obj.get("Issuer").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                let supply = parse_issued_amount(value, currency, issuer)?;
+                obj.insert(sf::TOTAL_SUPPLY, STValue::Amount(supply));
+            }
+        }
+
+        // Extract and add LimitAmount (for TrustSet)
+        if let Some(limit_val) = tx_json.get("LimitAmount") {
+            if let Some(limit_obj) = limit_val.as_object() {
+                // Issued currency
+                let value = limit_obj.get("value").and_then(|v| v.as_str())
+                    .or_else(|| limit_obj.get("Value").and_then(|v| v.as_str()))
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing LimitAmount.value"))?;
+                let currency = limit_obj.get("currency").and_then(|v| v.as_str())
+                    .or_else(|| limit_obj.get("Currency").and_then(|v| v.as_str()))
+                    .ok_or_else(|| JsonRpcError::new(31, "Missing LimitAmount.currency"))?;
+                let issuer = limit_obj.get("issuer").and_then(|v| v.as_str())
+                    .or_else(|| limit_obj.get("Issuer").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                let limit = parse_issued_amount(value, currency, issuer)?;
+                obj.insert(sf::LIMIT_AMOUNT, STValue::Amount(limit));
+            }
+        }
+
         // Serialize to bytes
         let mut serializer = Serializer::new();
         serializer.add_object(&obj).map_err(|e| {
@@ -1132,6 +1219,7 @@ impl RpcHandler for AppRpcHandler {
             // Transaction Methods
             // ================================================================
             "submit" => {
+                tracing::warn!("DEBUG RPC: submit handler called");
                 let params = params.ok_or(JsonRpcError::invalid_params())?;
                 let tx_blob = params.get("tx_blob")
                     .and_then(|v| v.as_str())

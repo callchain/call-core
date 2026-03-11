@@ -1,0 +1,35 @@
+# Call-core Node 2 Configuration (Native Mode)
+node_name = "call-dev-node-2"
+
+# P2P network settings
+listen_address = "127.0.0.1:51236"
+
+# Bootstrap peers - connect to other nodes on localhost
+peers = [
+    "127.0.0.1:51235",
+    "127.0.0.1:51237",
+]
+
+# Data directory for blockchain storage
+data_dir = "/Users/lando/work/call/call-core/devnet/node2/data"
+
+# Genesis configuration (must match stress test expectations)
+genesis_file = "/Users/lando/work/call/call-core/devnet/genesis.json"
+
+# Validator configuration
+validation_seed = "sEdTvJH6xms2zZ4sDqpadBP4FVsK2KXGv4PBg4Pd8QhNbmXvSRL"
+
+# Peer connection limits
+max_peers = 50
+target_peers = 10
+
+# RPC server configuration
+rpc_enabled = true
+rpc_bind_address = "127.0.0.1"
+rpc_port = 5006
+
+# Enable admin RPC methods
+rpc_admin_enabled = true
+
+# Logging
+log_level = "debug"

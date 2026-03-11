@@ -2163,8 +2163,10 @@ impl LedgerState {
 
     fn serialize_account_root(root: &AccountRoot) -> Vec<u8> {
         use serialization::Serializer;
+        use primitives::UInt160;
         let mut ser = Serializer::with_capacity(128);
-        ser.add_account(root.account);
+        // Account is stored as raw 20 bytes (not VL-encoded to match deserialization)
+        ser.add160(UInt160::new(*root.account.as_bytes()));
         ser.add_amount(root.balance);
         ser.add32(root.sequence);
         ser.add32(root.owner_count);

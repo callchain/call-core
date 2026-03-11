@@ -2,6 +2,36 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use tracing::{info, warn};
 
+/// Transaction pool configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionPoolConfig {
+    /// Enable PRE_SEQ caching
+    pub pre_seq_cache_enabled: bool,
+    /// How many ledger rounds to cache PRE_SEQ transactions
+    pub pre_seq_cache_rounds: u64,
+    /// Maximum total cached transactions
+    pub pre_seq_cache_max_size: usize,
+    /// Maximum cached per account (anti-spam)
+    pub pre_seq_per_account_limit: usize,
+    /// Maximum sequence gap to cache (0 = disable gap checking)
+    pub pre_seq_max_sequence_gap: u32,
+    /// Maximum transactions per account per ledger (fairness)
+    pub max_tx_per_account_per_ledger: usize,
+}
+
+impl Default for TransactionPoolConfig {
+    fn default() -> Self {
+        Self {
+            pre_seq_cache_enabled: true,
+            pre_seq_cache_rounds: 10,
+            pre_seq_cache_max_size: 10000,
+            pre_seq_per_account_limit: 1000,
+            pre_seq_max_sequence_gap: 100,
+            max_tx_per_account_per_ledger: 50,
+        }
+    }
+}
+
 /// Node configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -45,6 +75,10 @@ pub struct Config {
 
     /// Path to genesis configuration file (optional)
     pub genesis_file: Option<String>,
+
+    /// Transaction pool configuration
+    #[serde(default)]
+    pub transaction_pool: TransactionPoolConfig,
 }
 
 mod serde_socket_addr {
@@ -107,6 +141,7 @@ impl Default for Config {
             rpc_admin_enabled: false,
             log_level: "info".to_string(),
             genesis_file: None,
+            transaction_pool: TransactionPoolConfig::default(),
         }
     }
 }

@@ -1,0 +1,50 @@
+{
+  "config": {
+    "chainId": 1337,
+    "networkName": "callchain-devnet",
+    "genesisTime": "2025-01-01T00:00:00Z",
+    "consensusParams": {
+      "ledgerMinCloseTime": 2,
+      "ledgerMaxCloseTime": 20,
+      "ledgerMinConsensus": 1,
+      "ledgerMaxConsensus": 50,
+      "validationQuorum": 1,
+      "minProposeTime": 3,
+      "maxProposeTime": 30
+    },
+    "feeSettings": {
+      "baseFee": 10,
+      "reserveBase": 10000000,
+      "reserveIncrement": 2000000
+    }
+  },
+  "alloc": {
+    "cGmJBrEfFssWuas4kCoHTX5r6aMEf6QHhy": {
+      "balance": "100000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "c3K3xXhvsWBnP3TitQfeg2ihAuaYybvtc7": {
+      "balance": "50000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cHSFoKcGXFZdbB7EKmWQMTUJbr66dwfMR1": {
+      "balance": "25000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cKKeufyrSZymFeGmtF1Vhi11eCSf2i6MhR": {
+      "balance": "10000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cUUsn5u9qPq7MiMiEDwdjMPsHHKyaesHPH": {
+      "balance": "5000000000",
+      "sequence": 1,
+      "flags": 0
+    }
+  },
+  "validators": [],
+  "coinbase": "cGmJBrEfFssWuas4kCoHTX5r6aMEf6QHhy"
+}

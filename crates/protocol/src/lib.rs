@@ -3,6 +3,7 @@ pub mod dex;
 pub mod genesis;
 pub mod ledger;
 pub mod ledger_entries;
+pub mod sig_cache;
 pub mod transactions;
 pub mod tx_engine;
 pub mod tx_queue;
@@ -24,6 +25,7 @@ pub use ledger_entries::{
 pub use transactions::{
     AffectedNode, SignerEntry, TER, Transaction, TransactionMetadata, TxType,
 };
-pub use tx_engine::{AffectedLedgerNode, ApplyContext, ApplyRules, TransactionEngine, TxResult};
-pub use tx_queue::{FeeEscalation, OpenLedger, QueuedTransaction, TransactionQueue};
+pub use sig_cache::{create_signature_cache, SharedSignatureCache, SignatureCache, SignatureState};
+pub use tx_engine::{AffectedLedgerNode, ApplyContext, ApplyFlags, ApplyRules, TransactionEngine, TxResult};
+pub use tx_queue::{FeeEscalation, OpenLedger, PreSeqCache, PreSeqCacheConfig, QueuedTransaction, TransactionQueue};
 pub use views::{BasicLedgerView, LedgerView};

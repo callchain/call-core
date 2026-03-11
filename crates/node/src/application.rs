@@ -3,7 +3,7 @@ use crate::rpc::{RpcConfig, RpcServer, AppRpcHandler};
 use consensus::{Consensus, ConsensusParms, ConsensusMode, ConsensusPhase};
 use network::Overlay;
 use primitives::{AccountID, NodeID, UInt256};
-use protocol::{GenesisConfig, GenesisLoader};
+use protocol::{GenesisConfig, GenesisLoader, PreSeqCache, PreSeqCacheConfig};
 use serialization::Amount;
 use storage::Database;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use tokio::sync::{RwLock, watch};
 use tokio::task::JoinHandle;
-use tracing::{info, debug, warn};
+use tracing::{info, debug, warn, error};
 use sha2::{Sha256, Digest};
 
 /// Transaction record for account history
@@ -125,6 +125,8 @@ pub struct Application {
     ledger_state: protocol::LedgerState,
     /// Transaction queue for pending transactions
     tx_queue: protocol::TransactionQueue,
+    /// PRE_SEQ transaction cache for retry
+    pre_seq_cache: protocol::PreSeqCache,
     /// Transaction history for account_tx and tx_history
     tx_history: TransactionHistory,
     /// Blacklist store for banned peers/accounts
@@ -151,6 +153,8 @@ pub struct Application {
     shard_crawler: storage::ShardCrawler,
     /// Genesis configuration (loaded at startup)
     genesis_config: Option<GenesisConfig>,
+    /// Signature cache for transaction verification
+    sig_cache: protocol::SharedSignatureCache,
 }
 
 /// Log manager for handling log file rotation
@@ -715,6 +719,23 @@ impl Application {
         // Initialize transaction queue (max 10000 pending transactions)
         let tx_queue = protocol::TransactionQueue::new(10000);
 
+        // Initialize PRE_SEQ cache with config from file
+        let pre_seq_cache_config = PreSeqCacheConfig {
+            max_cache_rounds: config.transaction_pool.pre_seq_cache_rounds,
+            max_cache_size: config.transaction_pool.pre_seq_cache_max_size,
+            max_per_account: config.transaction_pool.pre_seq_per_account_limit,
+            max_sequence_gap: config.transaction_pool.pre_seq_max_sequence_gap,
+        };
+        info!(
+            "Transaction pool config: rounds={}, size={}, per_account={}, gap={}, max_per_ledger={}",
+            pre_seq_cache_config.max_cache_rounds,
+            pre_seq_cache_config.max_cache_size,
+            pre_seq_cache_config.max_per_account,
+            pre_seq_cache_config.max_sequence_gap,
+            config.transaction_pool.max_tx_per_account_per_ledger
+        );
+        let pre_seq_cache = PreSeqCache::new(pre_seq_cache_config);
+
         // Initialize transaction history
         let tx_history = TransactionHistory::new();
 
@@ -761,6 +782,7 @@ impl Application {
             current_ledger_seq: 0,
             ledger_state,
             tx_queue,
+            pre_seq_cache,
             tx_history,
             blacklist,
             issue_tracker,
@@ -774,6 +796,7 @@ impl Application {
             shard_store,
             shard_crawler,
             genesis_config: None,
+            sig_cache: protocol::create_signature_cache(),
         })
     }
 
@@ -1247,12 +1270,44 @@ impl Application {
     }
 
     /// Process transactions from the queue and apply them to the ledger
+    /// Uses the new transaction selection policy: Account + Sequence + Fee + FIFO
     fn process_ledger_transactions(&mut self) -> anyhow::Result<()> {
-        use protocol::views::MutableLedgerView;
+        use protocol::views::{MutableLedgerView, LedgerView};
         use protocol::ledger::LedgerInfo;
-        use protocol::tx_engine::{TransactionEngine, ApplyContext, ApplyRules};
+        use protocol::tx_engine::{TransactionEngine, ApplyContext, ApplyFlags, ApplyRules};
 
-        info!("Processing {} queued transactions", self.tx_queue.len());
+        // Increment cache round and adjust for load
+        self.pre_seq_cache.increment_round();
+        self.pre_seq_cache.adjust_for_load(self.tx_queue.len(), self.pre_seq_cache.len());
+
+        // Collect transactions from queue and cache, sorted by (Account, Sequence, -Fee, FIFO)
+        let mut all_transactions: Vec<protocol::QueuedTransaction> = Vec::new();
+
+        // Get sorted transactions from queue
+        let queued = self.tx_queue.get_all_sorted();
+        all_transactions.extend(queued.into_iter().cloned());
+
+        // Get cached transactions that are ready to retry (removes them from cache)
+        let cached = self.pre_seq_cache.take_retry_transactions();
+        all_transactions.extend(cached);
+
+        // Sort combined list by (Account, Sequence, -Fee, FIFO)
+        all_transactions.sort_by(|a, b| {
+            a.transaction.account.as_bytes().cmp(b.transaction.account.as_bytes())
+                .then_with(|| a.transaction.sequence.cmp(&b.transaction.sequence))
+                .then_with(|| b.transaction.fee.cmp(&a.transaction.fee))
+                .then_with(|| a.arrival_order.cmp(&b.arrival_order))
+        });
+
+        info!(
+            "Processing {} transactions ({} from queue, {} from cache)",
+            all_transactions.len(),
+            self.tx_queue.len(),
+            self.pre_seq_cache.len()
+        );
+
+        // Clear the queue since we've taken all transactions
+        self.tx_queue.clear();
 
         // Create transaction engine
         let engine = TransactionEngine::new();
@@ -1261,7 +1316,6 @@ impl Application {
         let mut tx_hashes: Vec<primitives::UInt256> = Vec::new();
 
         // Create a mutable view of the ledger state for all transactions
-        // This must be outside the loop so sequence updates are persisted
         let ledger_info = LedgerInfo {
             hash: self.current_ledger_hash,
             seq: self.current_ledger_seq,
@@ -1269,40 +1323,103 @@ impl Application {
         };
         let mut view = MutableLedgerView::new(&mut self.ledger_state, ledger_info);
 
+        // Pre-fetch account sequences for cache gap checking (before ctx borrows view)
+        let mut account_sequences: std::collections::HashMap<AccountID, u32> = std::collections::HashMap::new();
+        for queued in &all_transactions {
+            let account = queued.transaction.account;
+            if !account_sequences.contains_key(&account) {
+                if let Some(root) = view.get_account_root(&account) {
+                    account_sequences.insert(account, root.sequence);
+                }
+            }
+        }
+
         // Create apply context once - reused for all transactions
         let mut ctx = ApplyContext {
             ledger: &mut view,
             rules: ApplyRules::default(),
+            flags: ApplyFlags::no_check_sign(),
             ledger_seq: self.current_ledger_seq + 1,
             parent_ledger_hash: self.current_ledger_hash,
         };
 
-        // Process transactions from queue directly
-        let mut applied_count = 0;
+        // Process transactions with per-account quota for fairness
+        let max_tx_per_account = self.config.transaction_pool.max_tx_per_account_per_ledger;
+        let mut account_tx_count: std::collections::HashMap<AccountID, usize> = std::collections::HashMap::new();
+        let mut skipped_for_quota = 0;
 
-        while let Some(queued) = self.tx_queue.pop_highest_fee() {
+        let mut applied_count = 0;
+        let mut pre_seq_count = 0;
+        let mut failed_count = 0;
+
+        for queued in all_transactions {
+            let account = queued.transaction.account;
+            let sequence = queued.transaction.sequence;
+
+            // Get current account sequence for cache gap checking
+            let current_account_seq = account_sequences.get(&account).copied();
+
+            // Check per-account quota
+            let count = account_tx_count.entry(account).or_insert(0);
+            if *count >= max_tx_per_account {
+                skipped_for_quota += 1;
+                // Re-queue for next ledger instead of dropping
+                if let Err(_) = self.pre_seq_cache.insert(queued.transaction, current_account_seq) {
+                    failed_count += 1;
+                }
+                continue;
+            }
+            *count += 1;
+
             // Apply transaction
             let result = engine.process(&mut ctx, &queued.transaction);
 
-            // Log failed transactions for debugging
-            if !result.ter.is_success() {
-                info!(
-                    "Transaction failed: type={:?}, account={}, seq={}, error={:?}",
-                    queued.transaction.get_tx_type(),
-                    hex::encode(queued.transaction.get_account().as_bytes()),
-                    queued.transaction.get_sequence(),
-                    result.ter
-                );
-            }
-
-            // Count successful applications and track the transaction hash
             if result.ter.is_success() {
                 applied_count += 1;
                 tx_hashes.push(queued.transaction.get_hash());
+                // Update sequence tracking in cache
+                self.pre_seq_cache.update_account_sequence(&account, sequence);
+            } else if result.ter.is_pre_seq() {
+                // Cache PRE_SEQ transactions for retry
+                use std::sync::Arc;
+                if self.pre_seq_cache.insert(queued.transaction, current_account_seq).is_ok() {
+                    pre_seq_count += 1;
+                } else {
+                    // Cache is full or per-account limit reached, transaction dropped
+                    failed_count += 1;
+                    // Log first few drops to avoid spamming logs
+                    if failed_count <= 10 {
+                        info!(
+                            "PRE_SEQ transaction dropped (cache limit reached): account={}, seq={}",
+                            hex::encode(account.as_bytes()),
+                            sequence
+                        );
+                    }
+                }
+            } else {
+                // Other failures - log and drop
+                failed_count += 1;
+                info!(
+                    "Transaction failed: type={:?}, account={}, seq={}, error={:?}",
+                    queued.transaction.get_tx_type(),
+                    hex::encode(account.as_bytes()),
+                    sequence,
+                    result.ter
+                );
             }
         }
 
-        info!("Applied {} transactions to ledger", applied_count);
+        // Expire old cache entries
+        let expired_count = self.pre_seq_cache.expire_old_entries().len();
+
+        info!(
+            "Applied {} transactions, cached {} PRE_SEQ, failed {}, expired {} from cache, skipped {} for quota",
+            applied_count,
+            pre_seq_count,
+            failed_count,
+            expired_count,
+            skipped_for_quota
+        );
 
         // Update ledger sequence
         self.current_ledger_seq += 1;
@@ -1466,6 +1583,9 @@ impl Application {
 
     /// Submit a transaction to the network
     pub fn submit_transaction(&mut self, tx_blob: &[u8]) -> anyhow::Result<String> {
+        use protocol::{ApplyContext, ApplyFlags, ApplyRules, TransactionEngine, SignatureState};
+        use protocol::views::BasicLedgerView;
+
         info!("Submitting transaction, size: {} bytes", tx_blob.len());
 
         // Step 1: Deserialize the transaction
@@ -1477,19 +1597,54 @@ impl Application {
             hex::encode(tx.get_account().as_bytes())
         );
 
-        // Step 2: Validate the transaction
-        self.validate_transaction(&tx)
-            .map_err(|e| anyhow::anyhow!("Transaction validation failed: {}", e))?;
+        // Step 2: Check signature cache first
+        let tx_hash = tx.get_hash();
+        let sig_state = self.sig_cache.get_state(&tx_hash);
 
-        info!("Transaction validated successfully");
+        match sig_state {
+            SignatureState::Bad => {
+                return Err(anyhow::anyhow!("Transaction signature is invalid (cached)"));
+            }
+            SignatureState::Good => {
+                info!("Transaction signature already verified (cached)");
+            }
+            SignatureState::Unknown => {
+                // Step 3: Verify signature using TransactionEngine
+                let engine = TransactionEngine::new();
+                let mut ledger_view = BasicLedgerView::new(primitives::UInt256::zero(), 0);
+                let mut ctx = ApplyContext {
+                    ledger: &mut ledger_view,
+                    rules: ApplyRules::default(),
+                    flags: ApplyFlags::preflight_only(), // Verify signature only, skip preclaim
+                    ledger_seq: 0,
+                    parent_ledger_hash: primitives::UInt256::zero(),
+                };
 
-        // Step 3: Add to open ledger (transaction queue)
+                // Run preflight to verify signature (preflight_only mode skips preclaim which needs ledger state)
+                let result = engine.process(&mut ctx, &tx);
+                if result.ter != protocol::TER::tesSUCCESS {
+                    // Cache the bad signature
+                    self.sig_cache.set_bad(tx_hash);
+                    return Err(anyhow::anyhow!("Transaction signature verification failed: {:?}", result.ter));
+                }
+
+                // Cache the good signature
+                self.sig_cache.set_good(tx_hash);
+                info!("Transaction signature verified and cached");
+            }
+        }
+
+        // Step 4: Add to open ledger (transaction queue)
+        info!("Adding transaction to open ledger...");
         self.add_to_open_ledger(&tx)
-            .map_err(|e| anyhow::anyhow!("Failed to add to open ledger: {}", e))?;
+            .map_err(|e| {
+                error!("Failed to add to open ledger: {}", e);
+                anyhow::anyhow!("Failed to add to open ledger: {}", e)
+            })?;
 
-        info!("Transaction added to open ledger");
+        info!("Transaction flow complete - added to open ledger and broadcast");
 
-        // Step 4: Broadcast to peers
+        // Step 5: Broadcast to peers
         self.broadcast_transaction(tx_blob)
             .map_err(|e| anyhow::anyhow!("Failed to broadcast transaction: {}", e))?;
 
@@ -1586,13 +1741,19 @@ impl Application {
                 }
                 // TakerPays (type=6/Amount, field=5) - for OfferCreate
                 (6, 5) => {
-                    taker_pays = Some(iter.get_amount()
-                        .map_err(|e| anyhow::anyhow!("Failed to read taker pays: {}", e))?);
+                    let amt = iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read taker pays: {}", e))?;
+                    tracing::info!("Deserialized TakerPays: mantissa={}, exponent={}, is_native={}, is_negative={}",
+                        amt.mantissa, amt.exponent, amt.is_native, amt.is_negative);
+                    taker_pays = Some(amt);
                 }
                 // TakerGets (type=6/Amount, field=6) - for OfferCreate
                 (6, 6) => {
-                    taker_gets = Some(iter.get_amount()
-                        .map_err(|e| anyhow::anyhow!("Failed to read taker gets: {}", e))?);
+                    let amt = iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read taker gets: {}", e))?;
+                    tracing::info!("Deserialized TakerGets: mantissa={}, exponent={}, is_native={}, is_negative={}",
+                        amt.mantissa, amt.exponent, amt.is_native, amt.is_negative);
+                    taker_gets = Some(amt);
                 }
                 // LimitAmount (type=6/Amount, field=17) - for TrustSet
                 (6, 17) => {
@@ -1626,8 +1787,11 @@ impl Application {
                 }
                 // TotalSupply (type=6/Amount, field=7) - for IssueSet
                 (6, 7) => {
-                    total_supply = Some(iter.get_amount()
-                        .map_err(|e| anyhow::anyhow!("Failed to read total supply: {}", e))?);
+                    let amt = iter.get_amount()
+                        .map_err(|e| anyhow::anyhow!("Failed to read total supply: {}", e))?;
+                    tracing::info!("Deserialized TotalSupply: mantissa={}, exponent={}, is_native={}, is_negative={}",
+                        amt.mantissa, amt.exponent, amt.is_native, amt.is_negative);
+                    total_supply = Some(amt);
                 }
                 // OfferSequence (type=2/UInt32, field=25) - for OfferCancel
                 (2, 25) => {
@@ -1643,6 +1807,68 @@ impl Application {
                 (8, 10) => {
                     unauthorize = Some(iter.get_account()
                         .map_err(|e| anyhow::anyhow!("Failed to read unauthorize: {}", e))?);
+                }
+                // Domain (type=7/VL, field=7) - for AccountSet
+                (7, 7) => {
+                    let _domain_bytes = iter.get_vl()
+                        .map_err(|e| anyhow::anyhow!("Failed to read domain: {}", e))?;
+                    // Domain is parsed but stored implicitly in tx_blob for signature verification
+                }
+                // DestinationTag (type=2/UInt32, field=14) - for Payment
+                (2, 14) => {
+                    let _dest_tag = iter.get32()
+                        .map_err(|e| anyhow::anyhow!("Failed to read destination tag: {}", e))?;
+                    // DestinationTag is parsed but stored implicitly in tx_blob
+                }
+                // SignerQuorum (type=2/UInt32, field=35) - for SignerListSet
+                (2, 35) => {
+                    let _signer_quorum = iter.get32()
+                        .map_err(|e| anyhow::anyhow!("Failed to read signer quorum: {}", e))?;
+                    // SignerQuorum is parsed but stored implicitly in tx_blob
+                }
+                // SignerEntries (type=15/STArray, field=57) - for SignerListSet
+                (15, 57) => {
+                    // Skip the array - it contains nested STObjects
+                    // Read until we find array end marker (type 15, field 1)
+                    loop {
+                        let arr_field_id = iter.get_field_id()
+                            .map_err(|e| anyhow::anyhow!("Failed to read array field ID: {}", e))?;
+                        // Array end marker is type 15, field 1
+                        if arr_field_id.0 == 15 && arr_field_id.1 == 1 {
+                            break;
+                        }
+                        // Object start marker is type 14, field 1
+                        if arr_field_id.0 == 14 && arr_field_id.1 == 1 {
+                            // Skip object content
+                            let mut depth = 1;
+                            while depth > 0 {
+                                let inner_id = iter.get_field_id()
+                                    .map_err(|e| anyhow::anyhow!("Failed to read inner field ID: {}", e))?;
+                                if inner_id.0 == 14 && inner_id.1 == 1 {
+                                    depth -= 1;
+                                } else if inner_id.0 == 14 {
+                                    depth += 1;
+                                } else {
+                                    // Skip value based on type
+                                    match inner_id.0 {
+                                        1 => { let _ = iter.get16()?; }
+                                        2 => { let _ = iter.get32()?; }
+                                        3 => { let _ = iter.get64()?; }
+                                        4 => { let _ = iter.get128()?; }
+                                        5 => { let _ = iter.get256()?; }
+                                        6 => { let _ = iter.get_amount()?; }
+                                        7 | 9..=13 => { let _ = iter.get_vl()?; }
+                                        8 => { let _ = iter.get_account()?; }
+                                        16 => { let _ = iter.get8()?; }
+                                        17 => { let _ = iter.get160()?; }
+                                        _ => {
+                                            return Err(anyhow::anyhow!("Unknown type {} in SignerEntries", inner_id.0));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 // Unknown field - skip based on type
                 (type_id, field_num) => {
@@ -1798,6 +2024,9 @@ impl Application {
         let hash = self.compute_tx_hash(tx_blob);
         tx.set_hash(hash);
 
+        // Store the raw blob for blob-based signature verification
+        tx.tx_blob = Some(tx_blob.to_vec());
+
         Ok(tx)
     }
 
@@ -1830,19 +2059,20 @@ impl Application {
     /// Add transaction to open ledger
     fn add_to_open_ledger(&mut self, tx: &protocol::Transaction) -> anyhow::Result<()> {
         // Add the transaction to the queue for inclusion in the next consensus round
-        debug!("Adding transaction to open ledger");
+        info!("Adding transaction to open ledger, queue size before: {}", self.tx_queue.len());
 
         // Wrap transaction in Arc and add to queue
         let tx_arc = std::sync::Arc::new(tx.clone());
         let tx_size = std::mem::size_of_val(&tx_arc);
         match self.tx_queue.insert(tx_arc) {
             Ok(_) => {
-                debug!("Transaction added to queue successfully");
+                info!("Transaction added to queue successfully, queue size after: {}", self.tx_queue.len());
                 // Also update consensus transaction count so ledger will close
                 self.consensus.add_transaction(tx_size);
                 Ok(())
             }
             Err(ter) => {
+                error!("Failed to queue transaction: {:?}", ter);
                 Err(anyhow::anyhow!("Failed to queue transaction: {:?}", ter))
             }
         }

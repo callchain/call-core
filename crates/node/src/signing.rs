@@ -121,8 +121,16 @@ pub fn sign_transaction_local(
     // IssueSet fields
     if let Some(total_supply_val) = tx_json.get("TotalSupply") {
         if let Some(total_supply_str) = total_supply_val.as_str() {
+            // Native CALL amount
             let total_supply_drops: u64 = total_supply_str.parse().map_err(|_| "Invalid TotalSupply")?;
             let total_supply = serialization::types::Amount::call(total_supply_drops);
+            obj.insert(sf::TOTAL_SUPPLY, STValue::Amount(total_supply));
+        } else if let Some(total_supply_obj) = total_supply_val.as_object() {
+            // Issued currency
+            let value = total_supply_obj.get("value").and_then(|v| v.as_str()).unwrap_or("0");
+            let currency = total_supply_obj.get("currency").and_then(|v| v.as_str()).unwrap_or("USD");
+            let issuer = total_supply_obj.get("issuer").and_then(|v| v.as_str()).unwrap_or("");
+            let total_supply = parse_issued_amount(value, currency, issuer)?;
             obj.insert(sf::TOTAL_SUPPLY, STValue::Amount(total_supply));
         }
     }
@@ -290,14 +298,20 @@ fn parse_issued_amount(value: &str, currency: &str, issuer: &str) -> Result<seri
         parse_account(issuer)?
     };
 
-    // Parse currency
-    let currency_bytes: [u8; 20] = if currency.len() == 3 {
+    // Parse currency - supports 3-letter codes (USD), 4-letter codes (GOLD), or 40-char hex
+    let currency_bytes: [u8; 20] = if currency.len() <= 20 {
+        // Standard ASCII currency code (USD, EUR, GOLD, etc.)
+        // Store at offset 12 to match Ripple's currency encoding
         let mut bytes = [0u8; 20];
-        bytes[12] = currency.as_bytes()[0];
-        bytes[13] = currency.as_bytes()[1];
-        bytes[14] = currency.as_bytes()[2];
+        let start = 12;
+        for (i, c) in currency.bytes().enumerate() {
+            if start + i < 20 {
+                bytes[start + i] = c;
+            }
+        }
         bytes
     } else if currency.len() == 40 {
+        // Full 20-byte hex-encoded currency
         let hex_bytes = hex::decode(currency).map_err(|_| "Invalid currency hex")?;
         if hex_bytes.len() == 20 {
             hex_bytes.try_into().map_err(|_| "Invalid currency length")?

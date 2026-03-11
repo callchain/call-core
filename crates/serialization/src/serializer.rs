@@ -548,7 +548,8 @@ impl<'a> SerialIter<'a> {
         let is_issued = (encoded >> 63) != 0;
 
         if !is_issued {
-            let is_negative = (encoded >> 62) != 0;
+            // Check only bit 62 for sign (bit 63 is always 0 for native amounts)
+            let is_negative = ((encoded >> 62) & 1) != 0;
             let mantissa = (encoded & 0x3FFFFFFFFFFFFFFF) as i64;
             let mantissa = if is_negative { -mantissa } else { mantissa };
 
@@ -561,9 +562,11 @@ impl<'a> SerialIter<'a> {
                 is_negative,
             })
         } else {
-            let is_negative = (encoded >> 62) != 0;
+            // Check only bit 62 for sign (not bit 63 which is the issued flag)
+            let is_negative = ((encoded >> 62) & 1) != 0;
             let exponent = ((encoded >> 54) & 0xFF) as i32 - 97;
-            let mantissa = (encoded & 0x3FFFFFFFFFFFFF) as i64;
+            // Mantissa is only 54 bits (bits 0-53), mask out sign and exponent bits
+            let mantissa = (encoded & 0x003FFFFFFFFFFFFF) as i64;
             let mantissa = if is_negative { -mantissa } else { mantissa };
 
             let currency = Currency::new(*self.get160()?.as_bytes());

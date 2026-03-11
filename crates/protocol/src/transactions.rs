@@ -165,6 +165,10 @@ impl TER {
         let code = *self as i32;
         code < 0 && code >= -100
     }
+
+    pub fn is_pre_seq(&self) -> bool {
+        *self == TER::terPRE_SEQ
+    }
 }
 
 /// Transaction structure
@@ -180,6 +184,8 @@ pub struct Transaction {
     pub txn_signature: Option<Vec<u8>>,
     pub hash: UInt256,
     pub data: STObject,
+    /// Raw transaction blob for blob-based signature verification
+    pub tx_blob: Option<Vec<u8>>,
     // Payment fields
     pub destination: Option<AccountID>,
     pub amount: Option<Amount>,
@@ -240,6 +246,7 @@ impl Transaction {
             txn_signature: None,
             hash: UInt256::zero(),
             data: STObject::new(),
+            tx_blob: None,
             destination: None,
             amount: None,
             destination_tag: None,
@@ -363,7 +370,7 @@ impl Transaction {
     /// Create a new issue set transaction
     pub fn new_issue_set(account: AccountID, amount: Amount, sequence: u32) -> Self {
         let mut tx = Self::new(TxType::IssueSet, account, sequence);
-        tx.amount = Some(amount);
+        tx.total_supply = Some(amount);
         tx
     }
 
