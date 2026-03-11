@@ -5,3 +5,7 @@
 /data
 *.log
 nohup.out
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
