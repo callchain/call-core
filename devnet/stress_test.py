@@ -640,9 +640,12 @@ def get_account_sequences_from_network(rpc: CallCoreRPC) -> Dict[int, int]:
         if "error" not in result:
             account_data = result.get("result", {}).get("account_data", {})
             current_seq = account_data.get("Sequence", 1)
-            # Next sequence is current + 1
-            sequences[idx] = current_seq + 1
-            print(f"  {wallet['name']}: current seq={current_seq}, next seq={sequences[idx]}")
+            # For a fresh account that has never submitted a transaction,
+            # Sequence=1 means the FIRST transaction should use seq=1
+            # For an account that has submitted N transactions,
+            # Sequence=N+1 means the NEXT transaction should use seq=N+1
+            sequences[idx] = current_seq
+            print(f"  {wallet['name']}: current seq={current_seq}, starting at seq={sequences[idx]}")
         else:
             # Account might not exist yet, start at 1
             sequences[idx] = 1
