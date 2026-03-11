@@ -33,3 +33,12 @@ rpc_admin_enabled = true
 
 # Logging
 log_level = "debug"
+
+# Transaction pool configuration - increased for large stress tests
+[transaction_pool]
+pre_seq_cache_enabled = true
+pre_seq_cache_rounds = 100
+pre_seq_cache_max_size = 200000
+pre_seq_per_account_limit = 50000
+pre_seq_max_sequence_gap = 10000
+max_tx_per_account_per_ledger = 5000
