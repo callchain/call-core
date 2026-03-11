@@ -9,3 +9,6 @@ nohup.out
 __pycache__/
 *.pyc
 *.pyo
+
+# Devnet runtime files
+devnet/.native-pids/
