@@ -27,7 +27,7 @@ import time
 import threading
 import concurrent.futures
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Callable
+from typing import List, Dict, Optional
 import hashlib
 import subprocess
 import os
@@ -137,6 +137,33 @@ GENESIS_WALLETS = [
 ]
 
 
+class SequenceManager:
+    """
+    Thread-safe sequence manager that ensures all accounts use sequential sequences.
+    Shared across all worker threads to prevent sequence gaps.
+    """
+    def __init__(self, initial_sequences: Optional[Dict[int, int]] = None):
+        self.lock = threading.Lock()
+        # Initialize sequences for each account from network or use defaults
+        if initial_sequences:
+            self.sequences = initial_sequences.copy()
+        else:
+            # Default: all accounts start at sequence 1
+            self.sequences = {i: 1 for i in range(len(GENESIS_WALLETS))}
+
+    def get_next_sequence(self, account_index: int) -> int:
+        """Get the next sequence number for an account in a thread-safe manner."""
+        with self.lock:
+            seq = self.sequences[account_index]
+            self.sequences[account_index] = seq + 1
+            return seq
+
+    def get_current_sequences(self) -> Dict[int, int]:
+        """Get a snapshot of current sequences (for debugging)."""
+        with self.lock:
+            return self.sequences.copy()
+
+
 @dataclass
 class TestResult:
     """Result of a single transaction test"""
@@ -166,8 +193,9 @@ class StressTestResults:
     total_time_seconds: float = 0.0
     sent_tx_hashes: Dict[str, str] = field(default_factory=dict)
     duplicate_hashes: List[str] = field(default_factory=list)
+    sequences_used: Dict[str, List[int]] = field(default_factory=dict)  # Track sequences per account
 
-    def add_result(self, result: TestResult):
+    def add_result(self, result: TestResult, account: str = None, seq: int = None):
         self.total_transactions += 1
         if result.success:
             self.successful += 1
@@ -180,6 +208,12 @@ class StressTestResults:
         if result.tx_type not in self.results_by_type:
             self.results_by_type[result.tx_type] = []
         self.results_by_type[result.tx_type].append(result)
+
+        # Track sequences used per account for debugging
+        if account and seq is not None:
+            if account not in self.sequences_used:
+                self.sequences_used[account] = []
+            self.sequences_used[account].append(seq)
 
 
 class CallCoreRPC:
@@ -263,11 +297,10 @@ class CallCoreRPC:
 class TransactionTester:
     """Tests all transaction types using genesis-funded accounts"""
 
-    def __init__(self, rpc: CallCoreRPC, seq_offset: int = 0, results: StressTestResults = None, worker_id: int = 0):
+    def __init__(self, rpc: CallCoreRPC, seq_manager: SequenceManager,
+                 results: StressTestResults = None, worker_id: int = 0):
         self.rpc = rpc
-        # Track sequence numbers per account to avoid conflicts
-        # seq_offset ensures different workers use different sequence ranges
-        self.sequences = {i: 1 + seq_offset for i in range(len(GENESIS_WALLETS))}
+        self.seq_manager = seq_manager  # Shared sequence manager
         self.lock = threading.Lock()
         self.results = results
         self.worker_id = worker_id
@@ -275,18 +308,15 @@ class TransactionTester:
         self.submitted_txs: List[Dict] = []
 
     def _get_next_sequence(self, account_index: int) -> int:
-        """Get the next sequence number for an account"""
-        with self.lock:
-            seq = self.sequences[account_index]
-            self.sequences[account_index] = seq + 1
-            return seq
+        """Get the next sequence number from the shared manager"""
+        return self.seq_manager.get_next_sequence(account_index)
 
     def _sign_and_submit(self, account_index: int, tx_json: Dict, tx_type: str) -> TestResult:
         """Sign a transaction and submit it"""
         start = time.time()
         wallet = GENESIS_WALLETS[account_index]
 
-        # Get sequence before signing for debug
+        # Get sequence from shared manager (ensures sequential ordering across all threads)
         seq = tx_json.get("Sequence", "unknown")
         account = tx_json.get("Account", "unknown")
 
@@ -294,9 +324,9 @@ class TransactionTester:
         tx_id = f"{account[:15]}..._seq{seq}"
 
         # Show first few transactions for debugging
-        show_debug = seq <= 3 or (isinstance(seq, int) and seq >= 10000 and seq <= 10002)
+        show_debug = seq <= 5
         if show_debug:
-            print(f"  [DEBUG] Signing {tx_type} {tx_id}: {json.dumps(tx_json)}")
+            print(f"  [DEBUG] Worker {self.worker_id} signing {tx_type} {tx_id}")
 
         # Sign the transaction
         tx_blob = self.rpc.sign(wallet["seed"], tx_json)
@@ -304,12 +334,6 @@ class TransactionTester:
             elapsed = (time.time() - start) * 1000
             print(f"  [SIGN FAILED] {tx_type} {tx_id}")
             return TestResult(tx_type, False, "Failed to sign transaction", elapsed)
-
-        if show_debug:
-            # Compute hash of tx_blob for comparison
-            blob_hash = hashlib.sha256(tx_blob.encode()).hexdigest()[:16]
-            print(f"  [DEBUG] tx_blob hash (sha256): {blob_hash}")
-            print(f"  [DEBUG] tx_blob (first 100 chars): {tx_blob[:100]}...")
 
         # Submit the transaction
         response = self.rpc.submit_transaction(tx_blob)
@@ -326,14 +350,18 @@ class TransactionTester:
         engine_result = result.get("engine_result", "")
         tx_hash = result.get("tx_hash")
 
-        # Log every transaction with its result
+        # Log transaction results
         if engine_result == "tesSUCCESS":
             pass  # Suppress success messages to reduce output noise
         elif "terDUPLICATE" in engine_result:
             print(f"  [DUPLICATE] {tx_type} {tx_id} -> {engine_result}")
         elif engine_result.startswith("ter"):
             print(f"  [RETRY] {tx_type} {tx_id} -> {engine_result}")
-        else:
+        elif engine_result.startswith("tec"):
+            print(f"  [CLAIMED] {tx_type} {tx_id} -> {engine_result}")
+        elif engine_result.startswith("tem"):
+            print(f"  [MALFORMED] {tx_type} {tx_id} -> {engine_result}")
+        elif engine_result:
             print(f"  [FAILED] {tx_type} {tx_id} -> {engine_result}")
 
         # Log transaction hash for debugging
@@ -349,12 +377,6 @@ class TransactionTester:
                     print(f"      Current:  {hash_entry}")
                 else:
                     self.results.sent_tx_hashes[tx_hash] = hash_entry
-                    # Print every transaction hash for debugging
-                    print(f"    [TX HASH] {tx_hash} ({account[:12]}... seq={seq})")
-
-        # IMPORTANT: submit returns "tesSUCCESS" meaning "accepted into queue"
-        # The actual result is determined during ledger close
-        # We track the transaction and will verify actual results after ledger close
 
         # Store transaction info for later verification
         tx_info = {
@@ -367,6 +389,13 @@ class TransactionTester:
             "submitted": True
         }
         self.submitted_txs.append(tx_info)
+
+        # Track sequence usage
+        if self.results:
+            with self.lock:
+                if account not in self.results.sequences_used:
+                    self.results.sequences_used[account] = []
+                self.results.sequences_used[account].append(seq)
 
         if engine_result == "tesSUCCESS":
             # Accepted into queue - actual result unknown until ledger close
@@ -447,15 +476,18 @@ class TransactionTester:
         return self._sign_and_submit(account_idx, tx_json, "OfferCreate")
 
     def test_offer_cancel(self) -> TestResult:
-        """Test OfferCancel transaction - creates an offer first, then cancels it"""
+        """Test OfferCancel transaction - cancels the previous offer created by this account"""
         account_idx = 4
-        seq = self._get_next_sequence(account_idx)
+
+        # Just create a new offer and immediately cancel it
+        # First get sequence for the offer creation
+        seq_create = self._get_next_sequence(account_idx)
 
         # First create an offer
         create_tx = {
             "TransactionType": "OfferCreate",
             "Account": GENESIS_WALLETS[account_idx]["address"],
-            "Sequence": seq,
+            "Sequence": seq_create,
             "Fee": "10",
             "TakerPays": "1000000",
             "TakerGets": {
@@ -466,17 +498,17 @@ class TransactionTester:
         }
 
         result = self._sign_and_submit(account_idx, create_tx, "OfferCreate")
-        if not result.success:
-            # If offer creation fails, report as OfferCancel failure
-            return TestResult("OfferCancel", False, f"Failed to create offer to cancel: {result.error}", result.response_time_ms)
+        # Note: Even if offer creation fails (e.g., tecINSUFF_FEE), we still try to cancel
+        # because the sequence was consumed
 
         # Now cancel the offer (use the sequence of the created offer)
+        seq_cancel = self._get_next_sequence(account_idx)
         cancel_tx = {
             "TransactionType": "OfferCancel",
             "Account": GENESIS_WALLETS[account_idx]["address"],
-            "Sequence": self._get_next_sequence(account_idx),
+            "Sequence": seq_cancel,
             "Fee": "10",
-            "OfferSequence": seq
+            "OfferSequence": seq_create
         }
 
         return self._sign_and_submit(account_idx, cancel_tx, "OfferCancel")
@@ -595,6 +627,30 @@ class TransactionTester:
         return results
 
 
+def get_account_sequences_from_network(rpc: CallCoreRPC) -> Dict[int, int]:
+    """
+    Query the network for current account sequences.
+    Returns a dict mapping account index to next sequence number.
+    """
+    sequences = {}
+    print("Querying current account sequences from network...")
+
+    for idx, wallet in enumerate(GENESIS_WALLETS):
+        result = rpc.account_info(wallet["address"])
+        if "error" not in result:
+            account_data = result.get("result", {}).get("account_data", {})
+            current_seq = account_data.get("Sequence", 1)
+            # Next sequence is current + 1
+            sequences[idx] = current_seq + 1
+            print(f"  {wallet['name']}: current seq={current_seq}, next seq={sequences[idx]}")
+        else:
+            # Account might not exist yet, start at 1
+            sequences[idx] = 1
+            print(f"  {wallet['name']}: not found, starting at seq=1")
+
+    return sequences
+
+
 def run_stress_test(args) -> StressTestResults:
     """Run the stress test"""
     print(f"\n{'='*60}")
@@ -615,8 +671,7 @@ def run_stress_test(args) -> StressTestResults:
         print("  ./devnet/devnet-up.sh start")
         sys.exit(1)
 
-    # Verify genesis accounts are funded (silently check node info)
-    info = rpc.server_info()
+    # Verify genesis accounts are funded
     print("Verifying genesis accounts...")
     all_accounts_funded = True
     for wallet in GENESIS_WALLETS:
@@ -627,11 +682,11 @@ def run_stress_test(args) -> StressTestResults:
         else:
             account_data = result.get("result", {}).get("account_data", {})
             balance = account_data.get("Balance", "0")
-            print(f"  {wallet['name']}: {balance} drops")
+            sequence = account_data.get("Sequence", 1)
+            print(f"  {wallet['name']}: {balance} drops, seq={sequence}")
 
     if not all_accounts_funded:
         print("\nWARNING: Some genesis accounts are not funded!")
-        print("Make sure the devnet is using the correct genesis.json")
 
     print()
 
@@ -640,48 +695,81 @@ def run_stress_test(args) -> StressTestResults:
     ledger_index = ledger.get("result", {}).get("ledger_current_index", 0)
     print(f"Current ledger index: {ledger_index}\n")
 
+    # Get current sequences from network
+    initial_sequences = get_account_sequences_from_network(rpc)
+
+    # Create shared sequence manager with current network state
+    seq_manager = SequenceManager(initial_sequences)
+
     results = StressTestResults()
 
-    # Define test functions (only Payment is fully supported by sign RPC currently)
-    all_tests = ["Payment"]
+    # Calculate transactions per worker
+    total_tests = 10  # Number of different transaction types
+    iterations_per_worker = max(1, args.count // (args.threads * total_tests))
+    actual_total = iterations_per_worker * args.threads * total_tests
+
+    print(f"\nAdjusted transaction count: {actual_total}")
+    print(f"Iterations per thread: {iterations_per_worker}")
+    print(f"Transaction types per iteration: {total_tests}\n")
 
     start_time = time.time()
 
     def worker(worker_id: int):
-        """Worker thread function"""
+        """Worker thread function - all threads share the same sequence manager"""
         local_rpc = CallCoreRPC(args.url)
-        # Pre-allocate sequence ranges per worker to avoid terDUPLICATE
-        # Worker 0: sequences 1-10000, Worker 1: 10001-20000, etc.
-        seq_offset = worker_id * 10000
-        tester = TransactionTester(local_rpc, seq_offset, results)
+        # All workers share the same sequence manager for sequential ordering
+        tester = TransactionTester(local_rpc, seq_manager, results, worker_id)
         local_results = []
 
-        tx_per_worker = args.count // args.threads
-        for i in range(tx_per_worker):
+        for i in range(iterations_per_worker):
             # Cycle through all transaction types
             test_results = tester.run_all_tests()
             local_results.extend(test_results)
 
-            if (i + 1) % 10 == 0:
-                print(f"  Worker {worker_id}: {i + 1}/{tx_per_worker} iterations complete")
+            if (i + 1) % 10 == 0 or iterations_per_worker <= 10:
+                print(f"  Worker {worker_id}: {i + 1}/{iterations_per_worker} iterations complete")
 
         return local_results
 
     print(f"Starting stress test with {args.threads} threads...")
-    print(f"Each thread will submit ~{args.count // args.threads} iterations x {len(all_tests)} tx types\n")
+    if args.sequential:
+        print("Running in SEQUENTIAL mode (workers run one at a time for guaranteed ordering)\n")
+    else:
+        print("All threads share a single sequence manager to ensure sequential sequences\n")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
-        futures = [executor.submit(worker, i) for i in range(args.threads)]
-
-        for future in concurrent.futures.as_completed(futures):
+    if args.sequential:
+        # Sequential mode: run workers one at a time
+        for worker_id in range(args.threads):
             try:
-                worker_results = future.result()
+                worker_results = worker(worker_id)
                 for result in worker_results:
                     results.add_result(result)
             except Exception as e:
-                print(f"Worker error: {e}")
+                print(f"Worker {worker_id} error: {e}")
+    else:
+        # Parallel mode: run workers concurrently
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
+            futures = [executor.submit(worker, i) for i in range(args.threads)]
+
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    worker_results = future.result()
+                    for result in worker_results:
+                        # We don't have account/seq here anymore, they're tracked in results
+                        results.add_result(result)
+                except Exception as e:
+                    print(f"Worker error: {e}")
 
     results.total_time_seconds = time.time() - start_time
+
+    # Show final sequences
+    print("\nFinal account sequences:")
+    final_sequences = seq_manager.get_current_sequences()
+    for idx, seq in sorted(final_sequences.items()):
+        wallet = GENESIS_WALLETS[idx]
+        start_seq = initial_sequences.get(idx, 1)
+        tx_count = seq - start_seq
+        print(f"  {wallet['name']}: started at {start_seq}, ended at {seq} ({tx_count} transactions)")
 
     # Try to force a ledger close
     print("\nForcing ledger close...")
@@ -750,6 +838,24 @@ def print_results(results: StressTestResults):
         print(f"  P95: {p95:.2f}ms")
         print(f"  P99: {p99:.2f}ms")
 
+    # Print sequence usage summary
+    print(f"\nSequence Usage Summary (per account):")
+    print(f"  {'Account':<35} {'Tx Count':>10} {'Sequence Range':>20}")
+    print(f"  {'-'*70}")
+
+    for account, sequences in sorted(results.sequences_used.items()):
+        if sequences:
+            seq_list = sorted(set(sequences))
+            min_seq = min(seq_list)
+            max_seq = max(seq_list)
+            print(f"  {account:<35} {len(sequences):>10} {min_seq}-{max_seq}")
+
+            # Check for gaps
+            expected_count = max_seq - min_seq + 1
+            if len(seq_list) != expected_count:
+                missing = set(range(min_seq, max_seq + 1)) - set(seq_list)
+                print(f"    WARNING: Missing sequences: {sorted(missing)[:10]}{'...' if len(missing) > 10 else ''}")
+
     # Print transaction hash summary
     print(f"\nTransaction Hash Summary:")
     print(f"  Unique transaction hashes: {len(results.sent_tx_hashes)}")
@@ -761,26 +867,6 @@ def print_results(results: StressTestResults):
             print(f"    - {h}")
         if len(results.duplicate_hashes) > 10:
             print(f"    ... and {len(results.duplicate_hashes) - 10} more")
-
-    # Show all transaction hashes for debugging
-    print(f"\n  All Transaction Hashes (total: {len(results.sent_tx_hashes)}):")
-    print(f"  {'-'*70}")
-    print(f"  {'Hash':<64} {'Account':<18} {'Seq':>6}")
-    print(f"  {'-'*70}")
-    for i, (tx_hash, entry) in enumerate(results.sent_tx_hashes.items()):
-        # Parse entry format: "hash (account seq=123)"
-        if '(' in entry and '...' in entry:
-            parts = entry.rsplit('...', 1)[1].rsplit(' seq=', 1)
-            if len(parts) == 2:
-                account, seq = parts[0].strip(), parts[1].strip(')')
-            else:
-                account, seq = "unknown", "?"
-        else:
-            account, seq = "unknown", "?"
-        print(f"  {tx_hash:<64} {account:<18} {seq:>6}")
-        if i >= 49 and len(results.sent_tx_hashes) > 50:
-            print(f"    ... and {len(results.sent_tx_hashes) - 50} more (showing first 50)")
-            break
 
     print(f"\n{'='*60}")
 
@@ -800,6 +886,8 @@ def main():
                         help="Total number of transaction iterations (default: 100, use 10000+ for large scale testing)")
     parser.add_argument("--threads", type=int, default=4,
                         help="Number of concurrent threads (default: 4)")
+    parser.add_argument("--sequential", action="store_true",
+                        help="Submit transactions sequentially (one thread at a time) to ensure proper ordering")
 
     args = parser.parse_args()
 

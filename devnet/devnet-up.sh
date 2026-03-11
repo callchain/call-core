@@ -174,6 +174,415 @@ clean_devnet() {
 }
 
 # ========================
+# Native (Local Binary) Functions - 3 Nodes
+# ========================
+
+NATIVE_PID_DIR="$DEVNET_DIR/.native-pids"
+NATIVE_LOG_DIR="$DEVNET_DIR/.native-logs"
+
+# Check if local binary exists
+check_native_binary() {
+    if [ ! -f "$PROJECT_ROOT/target/release/calld" ]; then
+        log_error "Local binary not found: $PROJECT_ROOT/target/release/calld"
+        log_info "Please build the release binary first:"
+        log_info "  cargo build --release --bin calld"
+        exit 1
+    fi
+}
+
+# Create native mode directories and configs
+setup_native() {
+    log_info "Setting up native mode directories..."
+
+    mkdir -p "$NATIVE_PID_DIR"
+    mkdir -p "$NATIVE_LOG_DIR"
+
+    # Create genesis.json for native mode (matching default_devnet() in genesis.rs)
+    # These addresses match what stress_test.py expects
+    cat > "$DEVNET_DIR/genesis.json" << 'GENEOF'
+{
+  "config": {
+    "chainId": 1337,
+    "networkName": "callchain-devnet",
+    "genesisTime": "2025-01-01T00:00:00Z",
+    "consensusParams": {
+      "ledgerMinCloseTime": 2,
+      "ledgerMaxCloseTime": 20,
+      "ledgerMinConsensus": 1,
+      "ledgerMaxConsensus": 50,
+      "validationQuorum": 1,
+      "minProposeTime": 3,
+      "maxProposeTime": 30
+    },
+    "feeSettings": {
+      "baseFee": 10,
+      "reserveBase": 10000000,
+      "reserveIncrement": 2000000
+    }
+  },
+  "alloc": {
+    "cGmJBrEfFssWuas4kCoHTX5r6aMEf6QHhy": {
+      "balance": "100000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "c3K3xXhvsWBnP3TitQfeg2ihAuaYybvtc7": {
+      "balance": "50000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cHSFoKcGXFZdbB7EKmWQMTUJbr66dwfMR1": {
+      "balance": "25000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cKKeufyrSZymFeGmtF1Vhi11eCSf2i6MhR": {
+      "balance": "10000000000",
+      "sequence": 1,
+      "flags": 0
+    },
+    "cUUsn5u9qPq7MiMiEDwdjMPsHHKyaesHPH": {
+      "balance": "5000000000",
+      "sequence": 1,
+      "flags": 0
+    }
+  },
+  "validators": [],
+  "coinbase": "cGmJBrEfFssWuas4kCoHTX5r6aMEf6QHhy"
+}
+GENEOF
+
+    for i in 1 2 3; do
+        mkdir -p "$DEVNET_DIR/node$i/data"
+
+        # Create config for native mode (localhost instead of Docker network)
+        # Set validation seed based on node number
+        if [ $i -eq 1 ]; then
+            validation_seed="sEdTLQ75P2X9VBbNqGihzrNWGtE7d6NHPmgSG8q5d8fM7YjHcXK"
+        elif [ $i -eq 2 ]; then
+            validation_seed="sEdTvJH6xms2zZ4sDqpadBP4FVsK2KXGv4PBg4Pd8QhNbmXvSRL"
+        else
+            validation_seed="sEdTvyZ9d9ZFz1LzhAuvP7CK3v5qPQzAcXKPm2fCBLkH2xKo1KQ"
+        fi
+
+        # Calculate peer ports (each node connects to the other two)
+        if [ $i -eq 1 ]; then
+            peer1="127.0.0.1:51236"
+            peer2="127.0.0.1:51237"
+        elif [ $i -eq 2 ]; then
+            peer1="127.0.0.1:51235"
+            peer2="127.0.0.1:51237"
+        else
+            peer1="127.0.0.1:51235"
+            peer2="127.0.0.1:51236"
+        fi
+
+        cat > "$DEVNET_DIR/node$i/config-native.toml" << EOF
+# Call-core Node $i Configuration (Native Mode)
+node_name = "call-dev-node-$i"
+
+# P2P network settings
+listen_address = "127.0.0.1:$((51234 + i))"
+
+# Bootstrap peers - connect to other nodes on localhost
+peers = [
+    "$peer1",
+    "$peer2",
+]
+
+# Data directory for blockchain storage
+data_dir = "$DEVNET_DIR/node$i/data"
+
+# Genesis configuration (must match stress test expectations)
+genesis_file = "$DEVNET_DIR/genesis.json"
+
+# Validator configuration
+validation_seed = "$validation_seed"
+
+# Peer connection limits
+max_peers = 50
+target_peers = 10
+
+# RPC server configuration
+rpc_enabled = true
+rpc_bind_address = "127.0.0.1"
+rpc_port = $((5004 + i))
+
+# Enable admin RPC methods
+rpc_admin_enabled = true
+
+# Logging
+log_level = "debug"
+EOF
+    done
+
+    log_success "Native mode configs created"
+}
+
+# Start native mode (3 nodes)
+start_native() {
+    log_info "Starting 3-node native devnet..."
+
+    check_native_binary
+    setup_native
+
+    # Stop any existing native nodes
+    stop_native_silent
+
+    # Start each node
+    for i in 1 2 3; do
+        log_info "Starting node $i on RPC port $((5004 + i)), P2P port $((51234 + i))..."
+
+        RUST_LOG=debug "$PROJECT_ROOT/target/release/calld" \
+            --config "$DEVNET_DIR/node$i/config-native.toml" \
+            start > "$NATIVE_LOG_DIR/node$i.log" 2>&1 &
+
+        echo $! > "$NATIVE_PID_DIR/node$i.pid"
+        log_success "Node $i started (PID: $!)"
+    done
+
+    echo ""
+    log_info "Waiting for nodes to initialize..."
+    sleep 5
+
+    echo ""
+    log_success "Native devnet started!"
+    log_info "RPC Endpoints:"
+    echo "  Node 1: http://localhost:5005"
+    echo "  Node 2: http://localhost:5006"
+    echo "  Node 3: http://localhost:5007"
+    echo ""
+    log_info "Logs: $NATIVE_LOG_DIR/"
+    log_info "Use '$0 native stop' to stop the devnet"
+}
+
+# Stop native mode (silent - for internal use)
+stop_native_silent() {
+    for i in 1 2 3; do
+        if [ -f "$NATIVE_PID_DIR/node$i.pid" ]; then
+            pid=$(cat "$NATIVE_PID_DIR/node$i.pid")
+            if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+            fi
+            rm -f "$NATIVE_PID_DIR/node$i.pid"
+        fi
+        # Also kill any lingering calld processes with our config
+        pkill -f "calld.*config-native.toml" 2>/dev/null || true
+    done
+}
+
+# Stop native mode
+stop_native() {
+    log_info "Stopping native devnet..."
+
+    stop_native_silent
+
+    log_success "Native devnet stopped"
+}
+
+# Show native mode status
+status_native() {
+    echo "Native Devnet Status:"
+    echo "====================="
+    for i in 1 2 3; do
+        if [ -f "$NATIVE_PID_DIR/node$i.pid" ]; then
+            pid=$(cat "$NATIVE_PID_DIR/node$i.pid")
+            if kill -0 "$pid" 2>/dev/null; then
+                echo -e "Node $i: ${GREEN}Running${NC} (PID: $pid)"
+                # Test RPC
+                response=$(curl -s -m 2 -X POST "http://localhost:$((5004 + i))/" \
+                    -H "Content-Type: application/json" \
+                    -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
+                if echo "$response" | grep -q "success"; then
+                    echo "  RPC: OK (port $((5004 + i)))"
+                else
+                    echo "  RPC: Not responding"
+                fi
+            else
+                echo -e "Node $i: ${RED}Not running${NC} (stale PID file)"
+                rm -f "$NATIVE_PID_DIR/node$i.pid"
+            fi
+        else
+            echo -e "Node $i: ${RED}Not running${NC}"
+        fi
+    done
+}
+
+# Show native mode logs
+logs_native() {
+    if [ -n "$1" ]; then
+        node_num="${1#node}"
+        if [ -f "$NATIVE_LOG_DIR/node$node_num.log" ]; then
+            tail -f "$NATIVE_LOG_DIR/node$node_num.log"
+        else
+            log_error "Log file not found for node $node_num"
+        fi
+    else
+        log_info "Showing logs for all nodes (Ctrl+C to exit)..."
+        if command -v multitail &> /dev/null; then
+            multitail "$NATIVE_LOG_DIR/node1.log" "$NATIVE_LOG_DIR/node2.log" "$NATIVE_LOG_DIR/node3.log" 2>/dev/null || \
+                tail -f "$NATIVE_LOG_DIR/node1.log" "$NATIVE_LOG_DIR/node2.log" "$NATIVE_LOG_DIR/node3.log"
+        else
+            tail -f "$NATIVE_LOG_DIR/node1.log" "$NATIVE_LOG_DIR/node2.log" "$NATIVE_LOG_DIR/node3.log"
+        fi
+    fi
+}
+
+# Clean native mode
+clean_native() {
+    log_warn "This will stop native devnet and remove all data"
+    read -p "Are you sure? (y/N) " confirm
+
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        log_info "Cancelled"
+        exit 0
+    fi
+
+    log_info "Cleaning up native devnet..."
+
+    stop_native_silent
+
+    # Remove data directories
+    for i in 1 2 3; do
+        rm -rf "$DEVNET_DIR/node$i/data"
+        rm -f "$DEVNET_DIR/node$i/config-native.toml"
+    done
+
+    rm -rf "$NATIVE_PID_DIR"
+    rm -rf "$NATIVE_LOG_DIR"
+
+    log_success "Native devnet cleaned up"
+}
+
+# Test native mode connectivity
+test_native_connectivity() {
+    log_info "Testing native devnet connectivity..."
+
+    # Test RPC endpoints
+    for port in 5005 5006 5007; do
+        echo -n "  Testing Node on port $port... "
+
+        # Retry logic for node check
+        local retries=3
+        local retry_count=0
+        local node_ok=false
+
+        while [ $retry_count -lt $retries ]; do
+            response=$(curl -s -m 3 -X POST "http://localhost:$port/" \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
+
+            if echo "$response" | grep -q "success"; then
+                node_ok=true
+                break
+            fi
+
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $retries ]; then
+                sleep 1
+            fi
+        done
+
+        if [ "$node_ok" = true ]; then
+            echo -e "${GREEN}OK${NC}"
+        else
+            echo -e "${RED}FAILED${NC}"
+        fi
+    done
+
+    # Get server info from node 1
+    echo ""
+    log_info "Server info from Node 1:"
+    curl -s -X POST "http://localhost:5005/" \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"server_info","id":1}' | \
+        python3 -m json.tool 2>/dev/null || cat
+}
+
+# Stress test the native devnet
+stress_native() {
+    local stress_type="${1:-full}"
+    local iterations="${2:-100}"
+    local threads="${3:-4}"
+
+    log_info "Running native devnet stress test (type: $stress_type)..."
+
+    # Check if Python is available
+    if ! command -v python3 &> /dev/null; then
+        log_error "Python3 is required for stress testing"
+        exit 1
+    fi
+
+    # Check if native devnet is running (with retry)
+    local node1_ok=false
+    local retries=3
+    local retry_count=0
+
+    while [ $retry_count -lt $retries ]; do
+        local response=$(curl -s -m 5 -X POST "http://localhost:5005/" \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"ping","id":1}' 2>/dev/null)
+        if echo "$response" | grep -q "success"; then
+            node1_ok=true
+            break
+        fi
+        retry_count=$((retry_count + 1))
+        log_warn "Node not responding, retrying... ($retry_count/$retries)"
+        sleep 1
+    done
+
+    if [ "$node1_ok" = false ]; then
+        log_error "Native devnet is not running. Start it first with: $0 native start"
+        exit 1
+    fi
+
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    case "$stress_type" in
+        simple)
+            log_info "Running simple stress test ($iterations iterations)..."
+            python3 "$script_dir/simple_stress_test.py" \
+                --url http://localhost:5005 \
+                --iterations "$iterations"
+            ;;
+        full|comprehensive)
+            log_info "Running comprehensive stress test ($iterations iterations, $threads threads)..."
+            python3 "$script_dir/stress_test.py" \
+                --url http://localhost:5005 \
+                --count "$iterations" \
+                --threads "$threads"
+            ;;
+        all)
+            log_info "Running all stress tests..."
+            echo ""
+            log_info "=== Simple Stress Test ==="
+            python3 "$script_dir/simple_stress_test.py" \
+                --url http://localhost:5005 \
+                --iterations "$iterations"
+            echo ""
+            log_info "=== Comprehensive Stress Test ==="
+            python3 "$script_dir/stress_test.py" \
+                --url http://localhost:5005 \
+                --count "$iterations" \
+                --threads "$threads"
+            ;;
+        *)
+            log_error "Unknown stress test type: $stress_type"
+            echo "Valid types: simple, full, all"
+            exit 1
+            ;;
+    esac
+
+    local exit_code=$?
+    if [ $exit_code -eq 0 ]; then
+        log_success "Stress test completed successfully"
+    else
+        log_error "Stress test failed with exit code $exit_code"
+    fi
+    return $exit_code
+}
+
+# ========================
 # Single Node Functions
 # ========================
 
@@ -497,6 +906,15 @@ print_usage() {
     echo "  simple      Basic RPC endpoint testing only"
     echo "  all         Run both simple and full tests"
     echo ""
+    echo "Native Mode Commands (3 nodes, local binary):"
+    echo "  native start  Start 3-node devnet using local binary"
+    echo "  native stop   Stop native devnet"
+    echo "  native status Show native devnet status"
+    echo "  native logs   View native node logs"
+    echo "  native clean  Clean native devnet data"
+    echo "  native test   Test native devnet connectivity"
+    echo "  native stress Run stress tests on native devnet"
+    echo ""
     echo "Single Node Commands:"
     echo "  single start  Start single node for transaction testing"
     echo "  single stop   Stop single node"
@@ -505,7 +923,12 @@ print_usage() {
     echo "  single clean  Clean single node data"
     echo ""
     echo "Examples:"
-    echo "  $0 start                      # Start the devnet"
+    echo "  $0 start                      # Start the docker devnet (default)"
+    echo "  $0 native start               # Start 3-node native devnet"
+    echo "  $0 native stop                # Stop native devnet"
+    echo "  $0 native test                # Test native devnet connectivity"
+    echo "  $0 native stress              # Run stress test on native devnet"
+    echo "  $0 native stress full 100 4   # Run full stress: 100 iters, 4 threads"
     echo "  $0 logs                       # View all logs"
     echo "  $0 logs call-dev-node-1       # View logs for node 1"
     echo "  $0 test                       # Test connectivity"
@@ -544,6 +967,36 @@ case "${1:-start}" in
         ;;
     stress)
         stress_devnet "$2" "$3" "$4"
+        ;;
+    native)
+        case "${2:-start}" in
+            start|up)
+                start_native
+                ;;
+            stop|down)
+                stop_native
+                ;;
+            status|ps)
+                status_native
+                ;;
+            logs)
+                logs_native "$3"
+                ;;
+            clean)
+                clean_native
+                ;;
+            test|ping)
+                test_native_connectivity
+                ;;
+            stress)
+                stress_native "$3" "$4" "$5"
+                ;;
+            *)
+                log_error "Unknown native command: $2"
+                echo "Valid native commands: start, stop, status, logs, clean, test, stress"
+                exit 1
+                ;;
+        esac
         ;;
     single)
         case "${2:-test}" in
