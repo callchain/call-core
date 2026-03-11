@@ -297,6 +297,10 @@ class CallCoreRPC:
 class TransactionTester:
     """Tests all transaction types using genesis-funded accounts"""
 
+    # Class-level set to track DepositPreauth pairs across all instances
+    _deposit_preauth_pairs: set = set()
+    _deposit_preauth_lock = threading.Lock()
+
     def __init__(self, rpc: CallCoreRPC, seq_manager: SequenceManager,
                  results: StressTestResults = None, worker_id: int = 0):
         self.rpc = rpc
@@ -573,16 +577,35 @@ class TransactionTester:
         return self._sign_and_submit(account_idx, tx_json, "NicknameSet")
 
     def test_deposit_preauth(self) -> TestResult:
-        """Test DepositPreauth transaction"""
+        """Test DepositPreauth transaction - only once per account pair"""
         account_idx = 3
         authorize = GENESIS_WALLETS[4]
 
+        account = GENESIS_WALLETS[account_idx]["address"]
+        authorize_addr = authorize["address"]
+
+        # Create unique pair identifier
+        pair_key = f"{account}:{authorize_addr}"
+
+        with TransactionTester._deposit_preauth_lock:
+            if pair_key in TransactionTester._deposit_preauth_pairs:
+                # Skip - this pair was already authorized
+                return TestResult(
+                    "DepositPreauth",
+                    True,
+                    "SKIPPED (already authorized)",
+                    0.0,
+                    None
+                )
+            # Mark this pair as being processed
+            TransactionTester._deposit_preauth_pairs.add(pair_key)
+
         tx_json = {
             "TransactionType": "DepositPreauth",
-            "Account": GENESIS_WALLETS[account_idx]["address"],
+            "Account": account,
             "Sequence": self._get_next_sequence(account_idx),
             "Fee": "10",
-            "Authorize": authorize["address"]
+            "Authorize": authorize_addr
         }
 
         return self._sign_and_submit(account_idx, tx_json, "DepositPreauth")
