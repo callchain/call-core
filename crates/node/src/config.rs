@@ -53,6 +53,30 @@ impl Default for ConsensusConfig {
     }
 }
 
+/// WebSocket server configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketConfig {
+    /// Whether WebSocket server is enabled
+    pub enabled: bool,
+    /// WebSocket bind address
+    pub bind_address: String,
+    /// WebSocket port
+    pub port: u16,
+    /// Maximum number of connections
+    pub max_connections: u32,
+}
+
+impl Default for WebSocketConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bind_address: "0.0.0.0".to_string(),
+            port: 6005,
+            max_connections: 1000,
+        }
+    }
+}
+
 /// Node configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -104,6 +128,10 @@ pub struct Config {
     /// Consensus configuration
     #[serde(default)]
     pub consensus: ConsensusConfig,
+
+    /// WebSocket server configuration
+    #[serde(default)]
+    pub websocket: WebSocketConfig,
 }
 
 mod serde_socket_addr {
@@ -168,6 +196,7 @@ impl Default for Config {
             genesis_file: None,
             transaction_pool: TransactionPoolConfig::default(),
             consensus: ConsensusConfig::default(),
+            websocket: WebSocketConfig::default(),
         }
     }
 }

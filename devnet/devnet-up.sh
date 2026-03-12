@@ -311,8 +311,15 @@ rpc_port = $((5004 + i))
 # Enable admin RPC methods
 rpc_admin_enabled = true
 
-# Logging
+# Logging (must be before table sections)
 log_level = "debug"
+
+# WebSocket server configuration
+[websocket]
+enabled = true
+bind_address = "127.0.0.1"
+port = $((6004 + i))
+max_connections = 1000
 
 # Transaction pool configuration - increased for large stress tests
 [transaction_pool]
@@ -369,6 +376,11 @@ start_native() {
     echo "  Node 1: http://localhost:5005"
     echo "  Node 2: http://localhost:5006"
     echo "  Node 3: http://localhost:5007"
+    echo ""
+    log_info "WebSocket Endpoints:"
+    echo "  Node 1: ws://localhost:6005"
+    echo "  Node 2: ws://localhost:6006"
+    echo "  Node 3: ws://localhost:6007"
     echo ""
     log_info "Logs: $NATIVE_LOG_DIR/"
     log_info "Use '$0 native stop' to stop the devnet"

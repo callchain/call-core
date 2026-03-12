@@ -31,8 +31,15 @@ rpc_port = 5006
 # Enable admin RPC methods
 rpc_admin_enabled = true
 
-# Logging
+# Logging (must be before table sections)
 log_level = "debug"
+
+# WebSocket server configuration
+[websocket]
+enabled = true
+bind_address = "127.0.0.1"
+port = 6006
+max_connections = 1000
 
 # Transaction pool configuration - increased for large stress tests
 [transaction_pool]
