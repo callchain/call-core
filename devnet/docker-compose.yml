@@ -74,6 +74,31 @@ services:
       retries: 3
       start_period: 30s
 
+  # Node 4 - Observer node (non-validator)
+  call-dev-node-4:
+    image: callchain/call-core:latest
+    container_name: call-dev-node-4
+    hostname: call-dev-node-4
+    volumes:
+      - ./node4/data:/data/node4
+      - ./node4/config.toml:/app/config.toml
+    ports:
+      - "5008:5008"   # RPC
+      - "51238:51238" # P2P
+    command: ["--config", "/app/config.toml", "start"]
+    networks:
+      call-devnet:
+        ipv4_address: 172.21.0.5
+    restart: unless-stopped
+    depends_on:
+      - call-dev-node-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5008/", "-H", "Content-Type: application/json", "-d", '{"jsonrpc":"2.0","method":"ping","id":1}']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 networks:
   call-devnet:
     driver: bridge

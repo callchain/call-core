@@ -2,7 +2,7 @@
 # Call-core Dev Testnet Management Script
 # Usage: ./devnet-up.sh [start|stop|restart|status|clean|logs]
 #
-# This script manages a 3-node dev testnet for development and testing
+# This script manages a 4-node dev testnet (3 validators + 1 observer) for development and testing
 
 set -e
 
@@ -61,7 +61,7 @@ get_compose_cmd() {
 setup_directories() {
     log_info "Setting up node directories..."
 
-    for i in 1 2 3; do
+    for i in 1 2 3 4; do
         mkdir -p "$DEVNET_DIR/node$i/data"
     done
 
@@ -93,9 +93,10 @@ start_devnet() {
 
     echo ""
     log_info "RPC Endpoints:"
-    echo "  Node 1: http://localhost:5005"
-    echo "  Node 2: http://localhost:5006"
-    echo "  Node 3: http://localhost:5007"
+    echo "  Node 1 (Validator): http://localhost:5005"
+    echo "  Node 2 (Validator): http://localhost:5006"
+    echo "  Node 3 (Validator): http://localhost:5007"
+    echo "  Node 4 (Observer):  http://localhost:5008"
     echo ""
     log_info "Use '$0 status' to check node status"
     log_info "Use '$0 logs' to view logs"
@@ -166,7 +167,7 @@ clean_devnet() {
     $compose_cmd -f docker-compose.yml down -v
 
     # Remove data directories
-    for i in 1 2 3; do
+    for i in 1 2 3 4; do
         rm -rf "$DEVNET_DIR/node$i/data"
     done
 
@@ -174,7 +175,7 @@ clean_devnet() {
 }
 
 # ========================
-# Native (Local Binary) Functions - 3 Nodes
+# Native (Local Binary) Functions - 4 Nodes (3 Validators + 1 Observer)
 # ========================
 
 NATIVE_PID_DIR="$DEVNET_DIR/.native-pids"
@@ -252,33 +253,55 @@ setup_native() {
 }
 GENEOF
 
-    for i in 1 2 3; do
+    for i in 1 2 3 4; do
         mkdir -p "$DEVNET_DIR/node$i/data"
 
         # Create config for native mode (localhost instead of Docker network)
-        # Set validation seed based on node number
+        # Set validation seed based on node number (nodes 1-3 are validators, node 4 is observer)
         if [ $i -eq 1 ]; then
             validation_seed="sEdTLQ75P2X9VBbNqGihzrNWGtE7d6NHPmgSG8q5d8fM7YjHcXK"
+            node_type="Validator"
         elif [ $i -eq 2 ]; then
             validation_seed="sEdTvJH6xms2zZ4sDqpadBP4FVsK2KXGv4PBg4Pd8QhNbmXvSRL"
-        else
+            node_type="Validator"
+        elif [ $i -eq 3 ]; then
             validation_seed="sEdTvyZ9d9ZFz1LzhAuvP7CK3v5qPQzAcXKPm2fCBLkH2xKo1KQ"
+            node_type="Validator"
+        else
+            # Node 4 is an observer (no validation_seed)
+            validation_seed=""
+            node_type="Observer"
         fi
 
-        # Calculate peer ports (each node connects to the other two)
+        # Calculate peer ports (each node connects to all other nodes except itself)
         if [ $i -eq 1 ]; then
             peer1="127.0.0.1:51236"
             peer2="127.0.0.1:51237"
+            peer3="127.0.0.1:51238"
         elif [ $i -eq 2 ]; then
             peer1="127.0.0.1:51235"
             peer2="127.0.0.1:51237"
-        else
+            peer3="127.0.0.1:51238"
+        elif [ $i -eq 3 ]; then
             peer1="127.0.0.1:51235"
             peer2="127.0.0.1:51236"
+            peer3="127.0.0.1:51238"
+        else
+            # Node 4 connects to all three validators
+            peer1="127.0.0.1:51235"
+            peer2="127.0.0.1:51236"
+            peer3="127.0.0.1:51237"
+        fi
+
+        # Build validation_seed config line (empty for observer)
+        if [ -n "$validation_seed" ]; then
+            validation_config="validation_seed = \"$validation_seed\""
+        else
+            validation_config="# No validation_seed - this is an observer node (not a validator)"
         fi
 
         cat > "$DEVNET_DIR/node$i/config-native.toml" << EOF
-# Call-core Node $i Configuration (Native Mode)
+# Call-core Node $i Configuration (Native Mode - $node_type)
 node_name = "call-dev-node-$i"
 
 # P2P network settings
@@ -288,6 +311,7 @@ listen_address = "127.0.0.1:$((51234 + i))"
 peers = [
     "$peer1",
     "$peer2",
+    "$peer3",
 ]
 
 # Data directory for blockchain storage
@@ -297,7 +321,7 @@ data_dir = "$DEVNET_DIR/node$i/data"
 genesis_file = "$DEVNET_DIR/genesis.json"
 
 # Validator configuration
-validation_seed = "$validation_seed"
+$validation_config
 
 # Peer connection limits
 max_peers = 50
@@ -344,9 +368,9 @@ EOF
     log_success "Native mode configs created"
 }
 
-# Start native mode (3 nodes)
+# Start native mode (4 nodes: 3 validators + 1 observer)
 start_native() {
-    log_info "Starting 3-node native devnet..."
+    log_info "Starting 4-node native devnet (3 validators + 1 observer)..."
 
     check_native_binary
     setup_native
@@ -355,8 +379,13 @@ start_native() {
     stop_native_silent
 
     # Start each node
-    for i in 1 2 3; do
-        log_info "Starting node $i on RPC port $((5004 + i)), P2P port $((51234 + i))..."
+    for i in 1 2 3 4; do
+        if [ $i -eq 4 ]; then
+            node_role="Observer"
+        else
+            node_role="Validator"
+        fi
+        log_info "Starting node $i ($node_role) on RPC port $((5004 + i)), P2P port $((51234 + i))..."
 
         RUST_LOG=debug "$PROJECT_ROOT/target/release/calld" \
             --config "$DEVNET_DIR/node$i/config-native.toml" \
@@ -373,14 +402,16 @@ start_native() {
     echo ""
     log_success "Native devnet started!"
     log_info "RPC Endpoints:"
-    echo "  Node 1: http://localhost:5005"
-    echo "  Node 2: http://localhost:5006"
-    echo "  Node 3: http://localhost:5007"
+    echo "  Node 1 (Validator): http://localhost:5005"
+    echo "  Node 2 (Validator): http://localhost:5006"
+    echo "  Node 3 (Validator): http://localhost:5007"
+    echo "  Node 4 (Observer):  http://localhost:5008"
     echo ""
     log_info "WebSocket Endpoints:"
-    echo "  Node 1: ws://localhost:6005"
-    echo "  Node 2: ws://localhost:6006"
-    echo "  Node 3: ws://localhost:6007"
+    echo "  Node 1 (Validator): ws://localhost:6005"
+    echo "  Node 2 (Validator): ws://localhost:6006"
+    echo "  Node 3 (Validator): ws://localhost:6007"
+    echo "  Node 4 (Observer):  ws://localhost:6008"
     echo ""
     log_info "Logs: $NATIVE_LOG_DIR/"
     log_info "Use '$0 native stop' to stop the devnet"
@@ -388,7 +419,7 @@ start_native() {
 
 # Stop native mode (silent - for internal use)
 stop_native_silent() {
-    for i in 1 2 3; do
+    for i in 1 2 3 4; do
         if [ -f "$NATIVE_PID_DIR/node$i.pid" ]; then
             pid=$(cat "$NATIVE_PID_DIR/node$i.pid")
             if kill -0 "$pid" 2>/dev/null; then
@@ -414,11 +445,16 @@ stop_native() {
 status_native() {
     echo "Native Devnet Status:"
     echo "====================="
-    for i in 1 2 3; do
+    for i in 1 2 3 4; do
+        if [ $i -eq 4 ]; then
+            node_role="Observer"
+        else
+            node_role="Validator"
+        fi
         if [ -f "$NATIVE_PID_DIR/node$i.pid" ]; then
             pid=$(cat "$NATIVE_PID_DIR/node$i.pid")
             if kill -0 "$pid" 2>/dev/null; then
-                echo -e "Node $i: ${GREEN}Running${NC} (PID: $pid)"
+                echo -e "Node $i ($node_role): ${GREEN}Running${NC} (PID: $pid)"
                 # Test RPC
                 response=$(curl -s -m 2 -X POST "http://localhost:$((5004 + i))/" \
                     -H "Content-Type: application/json" \
@@ -429,11 +465,11 @@ status_native() {
                     echo "  RPC: Not responding"
                 fi
             else
-                echo -e "Node $i: ${RED}Not running${NC} (stale PID file)"
+                echo -e "Node $i ($node_role): ${RED}Not running${NC} (stale PID file)"
                 rm -f "$NATIVE_PID_DIR/node$i.pid"
             fi
         else
-            echo -e "Node $i: ${RED}Not running${NC}"
+            echo -e "Node $i ($node_role): ${RED}Not running${NC}"
         fi
     done
 }
@@ -450,10 +486,10 @@ logs_native() {
     else
         log_info "Showing logs for all nodes (Ctrl+C to exit)..."
         if command -v multitail &> /dev/null; then
-            multitail "$NATIVE_LOG_DIR/node1.log" "$NATIVE_LOG_DIR/node2.log" "$NATIVE_LOG_DIR/node3.log" 2>/dev/null || \
-                tail -f "$NATIVE_LOG_DIR/node1.log" "$NATIVE_LOG_DIR/node2.log" "$NATIVE_LOG_DIR/node3.log"
+            multitail "$NATIVE_LOG_DIR/node1.log" "$NATIVE_LOG_DIR/node2.log" "$NATIVE_LOG_DIR/node3.log" "$NATIVE_LOG_DIR/node4.log" 2>/dev/null || \
+                tail -f "$NATIVE_LOG_DIR/node1.log" "$NATIVE_LOG_DIR/node2.log" "$NATIVE_LOG_DIR/node3.log" "$NATIVE_LOG_DIR/node4.log"
         else
-            tail -f "$NATIVE_LOG_DIR/node1.log" "$NATIVE_LOG_DIR/node2.log" "$NATIVE_LOG_DIR/node3.log"
+            tail -f "$NATIVE_LOG_DIR/node1.log" "$NATIVE_LOG_DIR/node2.log" "$NATIVE_LOG_DIR/node3.log" "$NATIVE_LOG_DIR/node4.log"
         fi
     fi
 }
@@ -473,7 +509,7 @@ clean_native() {
     stop_native_silent
 
     # Remove data directories
-    for i in 1 2 3; do
+    for i in 1 2 3 4; do
         rm -rf "$DEVNET_DIR/node$i/data"
         rm -f "$DEVNET_DIR/node$i/config-native.toml"
     done
@@ -488,8 +524,8 @@ clean_native() {
 test_native_connectivity() {
     log_info "Testing native devnet connectivity..."
 
-    # Test RPC endpoints
-    for port in 5005 5006 5007; do
+    # Test RPC endpoints (3 validators + 1 observer)
+    for port in 5005 5006 5007 5008; do
         echo -n "  Testing Node on port $port... "
 
         # Retry logic for node check
@@ -789,8 +825,8 @@ test_single_transactions() {
 test_devnet() {
     log_info "Testing devnet connectivity..."
 
-    # Test RPC endpoints
-    for port in 5005 5006 5007; do
+    # Test RPC endpoints (3 validators + 1 observer)
+    for port in 5005 5006 5007 5008; do
         echo -n "  Testing Node on port $port... "
 
         # Retry logic for node check

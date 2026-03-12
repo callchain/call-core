@@ -1,4 +1,4 @@
-# Call-core Node 2 Configuration (Native Mode)
+# Call-core Node 2 Configuration (Native Mode - Validator)
 node_name = "call-dev-node-2"
 
 # P2P network settings
@@ -8,6 +8,7 @@ listen_address = "127.0.0.1:51236"
 peers = [
     "127.0.0.1:51235",
     "127.0.0.1:51237",
+    "127.0.0.1:51238",
 ]
 
 # Data directory for blockchain storage

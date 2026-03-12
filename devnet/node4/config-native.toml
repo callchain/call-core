@@ -1,24 +1,24 @@
-# Call-core Node 1 Configuration (Native Mode - Validator)
-node_name = "call-dev-node-1"
+# Call-core Node 4 Configuration (Native Mode - Observer)
+node_name = "call-dev-node-4"
 
 # P2P network settings
-listen_address = "127.0.0.1:51235"
+listen_address = "127.0.0.1:51238"
 
 # Bootstrap peers - connect to other nodes on localhost
 peers = [
+    "127.0.0.1:51235",
     "127.0.0.1:51236",
     "127.0.0.1:51237",
-    "127.0.0.1:51238",
 ]
 
 # Data directory for blockchain storage
-data_dir = "/Users/lando/work/call/call-core/devnet/node1/data"
+data_dir = "/Users/lando/work/call/call-core/devnet/node4/data"
 
 # Genesis configuration (must match stress test expectations)
 genesis_file = "/Users/lando/work/call/call-core/devnet/genesis.json"
 
 # Validator configuration
-validation_seed = "sEdTLQ75P2X9VBbNqGihzrNWGtE7d6NHPmgSG8q5d8fM7YjHcXK"
+# No validation_seed - this is an observer node (not a validator)
 
 # Peer connection limits
 max_peers = 50
@@ -27,7 +27,7 @@ target_peers = 10
 # RPC server configuration
 rpc_enabled = true
 rpc_bind_address = "127.0.0.1"
-rpc_port = 5005
+rpc_port = 5008
 
 # Enable admin RPC methods
 rpc_admin_enabled = true
@@ -39,7 +39,7 @@ log_level = "debug"
 [websocket]
 enabled = true
 bind_address = "127.0.0.1"
-port = 6005
+port = 6008
 max_connections = 1000
 
 # Transaction pool configuration - increased for large stress tests

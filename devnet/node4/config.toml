@@ -1,37 +1,34 @@
-# Call-core Node 3 Configuration
-# Dev Testnet - 3 Node Setup
+# Call-core Node 4 Configuration
+# Dev Testnet - 4 Node Setup (Observer Node)
 
 # Node identity
-node_name = "call-dev-node-3"
+node_name = "call-dev-node-4"
 
 # P2P network settings
-# Listen on all interfaces, port 51237 (different from node1 and node2)
-listen_address = "0.0.0.0:51237"
+# Listen on all interfaces, port 51238
+listen_address = "0.0.0.0:51238"
 
 # Bootstrap peers - connect to other nodes in the devnet
 # Using Docker network IPs (172.21.0.x subnet)
 peers = [
     "172.21.0.2:51235",
     "172.21.0.3:51236",
-    "172.21.0.5:51238",
+    "172.21.0.4:51237",
 ]
 
 # Data directory for blockchain storage
-data_dir = "/data/node3"
+data_dir = "/data/node4"
 
-# Validator configuration
-# This node is a validator with a deterministic seed for testing
-validation_seed = "sEdWmL9Q4Z9WCcnOsIkltPYIvG9f8PJRoShUG0s7f0hO9AlJeZM"
+# No validation_seed - this is an observer node (not a validator)
 
 # Peer connection limits
 max_peers = 50
 target_peers = 10
 
 # RPC server configuration
-# Different port from node1 and node2
 rpc_enabled = true
 rpc_bind_address = "0.0.0.0"
-rpc_port = 5007
+rpc_port = 5008
 
 # Enable admin RPC methods (for devnet testing)
 rpc_admin_enabled = true

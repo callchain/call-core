@@ -13,6 +13,7 @@ listen_address = "0.0.0.0:51236"
 peers = [
     "172.21.0.2:51235",
     "172.21.0.4:51237",
+    "172.21.0.5:51238",
 ]
 
 # Data directory for blockchain storage
