@@ -2175,7 +2175,7 @@ impl LedgerState {
         ser.finish()
     }
 
-    fn deserialize_account_root(account: &AccountID, data: &[u8]) -> Option<AccountRoot> {
+    pub fn deserialize_account_root(account: &AccountID, data: &[u8]) -> Option<AccountRoot> {
         // First try STObject format (used by genesis)
         use serialization::SerialIter;
         use crate::ledger_entries::LedgerEntry;
@@ -2309,7 +2309,7 @@ impl LedgerState {
         })
     }
 
-    fn deserialize_directory(data: &[u8]) -> Option<DirectoryNode> {
+    pub fn deserialize_directory(data: &[u8]) -> Option<DirectoryNode> {
         use serialization::SerialIter;
         let mut iter = SerialIter::new(data);
 
@@ -2336,7 +2336,7 @@ impl LedgerState {
         ser.finish()
     }
 
-    fn deserialize_nickname(data: &[u8]) -> Option<NicknameEntry> {
+    pub fn deserialize_nickname(data: &[u8]) -> Option<NicknameEntry> {
         use serialization::SerialIter;
         let mut iter = SerialIter::new(data);
 
@@ -2430,7 +2430,7 @@ impl LedgerState {
         })
     }
 
-    fn deserialize_invoice(data: &[u8]) -> Option<Invoice> {
+    pub fn deserialize_invoice(data: &[u8]) -> Option<Invoice> {
         use serialization::SerialIter;
         let mut iter = SerialIter::new(data);
 

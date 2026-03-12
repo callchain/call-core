@@ -3120,6 +3120,207 @@ impl RpcHandler for AppRpcHandler {
             }
 
             // ================================================================
+            // Dump Ledger Method
+            // ================================================================
+            "dump_ledger" => {
+                let app = self.app.read().await;
+                let ledger_state = app.get_ledger_state();
+                let current_ledger = app.consensus.get_ledger_index();
+                let ledger_hash = app.get_current_ledger_hash();
+
+                // Collect all ledger entries
+                let mut account_roots = Vec::new();
+                let mut call_states = Vec::new();
+                let mut offers = Vec::new();
+                let mut signer_lists = Vec::new();
+                let mut nicknames = Vec::new();
+                let mut deposit_preauths = Vec::new();
+                let mut other_entries = Vec::new();
+
+                // Iterate through all items in the ledger state
+                for item in ledger_state.iter() {
+                    let data = item.data();
+                    let index = item.key();
+
+                    // Try to deserialize as each type
+                    // For account root, try STObject format first, then raw format
+                    let mut found = false;
+                    {
+                        use serialization::SerialIter;
+                        use protocol::ledger_entries::LedgerEntry;
+                        let mut iter = SerialIter::new(data);
+                        if let Ok(obj) = iter.get_object() {
+                            // Try to deserialize via AccountRoot::from_stobject first
+                            if let Some(account_root) = protocol::ledger_entries::AccountRoot::from_stobject(&obj) {
+                                found = true;
+                                account_roots.push(serde_json::json!({
+                                    "ledger_index": hex::encode(index.as_bytes()),
+                                    "account": hex::encode(account_root.account.as_bytes()),
+                                    "balance": account_root.balance.mantissa.to_string(),
+                                    "sequence": account_root.sequence,
+                                    "owner_count": account_root.owner_count,
+                                    "flags": account_root.flags,
+                                    "previous_txn_id": hex::encode(account_root.previous_txn_id.as_bytes()),
+                                    "previous_txn_lgr_seq": account_root.previous_txn_lgr_seq,
+                                }));
+                            }
+                        }
+                    }
+                    if found {
+                        continue;
+                    }
+
+                    // Try raw format (genesis format): 20 bytes account + 8 bytes amount + 4 bytes sequence + ...
+                    if data.len() >= 32 {
+                        let account_bytes: [u8; 20] = data[0..20].try_into().unwrap();
+                        let account = AccountID::new(account_bytes);
+                        // Amount is 8 bytes (64 bits): bits 0-61 = mantissa, bit 62 = sign, bit 63 = type (0=native)
+                        let amount_bits = u64::from_be_bytes(data[20..28].try_into().unwrap());
+                        let mantissa = (amount_bits & 0x3FFFFFFFFFFFFFFF) as i64;
+                        let is_negative = (amount_bits & (1u64 << 62)) != 0;
+                        let balance = if is_negative { -mantissa } else { mantissa };
+                        // Sequence is 4 bytes big-endian (bytes 28-32)
+                        let sequence = u32::from_be_bytes(data[28..32].try_into().unwrap());
+
+                        // Check if this looks like a valid account root (non-zero balance)
+                        if balance > 0 {
+                            found = true;
+                            account_roots.push(serde_json::json!({
+                                "ledger_index": hex::encode(index.as_bytes()),
+                                "account": hex::encode(account.as_bytes()),
+                                "balance": balance.to_string(),
+                                "sequence": sequence,
+                                "owner_count": 0,
+                                "flags": 0,
+                                "previous_txn_id": "0000000000000000000000000000000000000000000000000000000000000000",
+                                "previous_txn_lgr_seq": 0,
+                            }));
+                        }
+                    }
+                    if found {
+                        continue;
+                    }
+
+                    // Try other types
+                    if let Some(call_state) = protocol::LedgerState::deserialize_call_state(data) {
+                        call_states.push(serde_json::json!({
+                            "ledger_index": hex::encode(index.as_bytes()),
+                            "account": hex::encode(call_state.account.as_bytes()),
+                            "issuer": hex::encode(call_state.issuer.as_bytes()),
+                            "currency": hex::encode(call_state.currency.as_bytes()),
+                            "balance": call_state.balance.mantissa.to_string(),
+                            "limit": call_state.limit.mantissa.to_string(),
+                            "limit_peer": call_state.limit_peer.mantissa.to_string(),
+                        }));
+                    } else if let Some(offer) = protocol::LedgerState::deserialize_offer(data) {
+                        offers.push(serde_json::json!({
+                            "ledger_index": hex::encode(index.as_bytes()),
+                            "account": hex::encode(offer.account.as_bytes()),
+                            "sequence": offer.sequence,
+                            "taker_pays": {
+                                "mantissa": offer.taker_pays.mantissa.to_string(),
+                                "exponent": offer.taker_pays.exponent,
+                                "is_native": offer.taker_pays.is_native,
+                                "currency": hex::encode(offer.taker_pays.get_currency().as_bytes()),
+                            },
+                            "taker_gets": {
+                                "mantissa": offer.taker_gets.mantissa.to_string(),
+                                "exponent": offer.taker_gets.exponent,
+                                "is_native": offer.taker_gets.is_native,
+                                "currency": hex::encode(offer.taker_gets.get_currency().as_bytes()),
+                            },
+                            "book_directory": hex::encode(offer.book_directory.as_bytes()),
+                            "book_node": offer.book_node,
+                            "owner_node": offer.owner_node,
+                        }));
+                    } else if let Some(signer_list) = protocol::LedgerState::deserialize_signer_list(data) {
+                        let signers: Vec<serde_json::Value> = signer_list.signers.iter().map(|s| {
+                            serde_json::json!({
+                                "account": hex::encode(s.account.as_bytes()),
+                                "weight": s.weight,
+                            })
+                        }).collect();
+                        signer_lists.push(serde_json::json!({
+                            "ledger_index": hex::encode(index.as_bytes()),
+                            "account": hex::encode(signer_list.account.as_bytes()),
+                            "signer_quorum": signer_list.signer_quorum,
+                            "signers": signers,
+                        }));
+                    } else if let Some(nickname) = protocol::LedgerState::deserialize_nickname(data) {
+                        nicknames.push(serde_json::json!({
+                            "ledger_index": hex::encode(index.as_bytes()),
+                            "account": hex::encode(nickname.account.as_bytes()),
+                            "nickname": String::from_utf8_lossy(&nickname.nickname).to_string(),
+                            "min_offer": nickname.min_offer.as_ref().map(|a| a.mantissa.to_string()),
+                        }));
+                    } else if let Some(preauth) = protocol::LedgerState::deserialize_deposit_preauth(data) {
+                        deposit_preauths.push(serde_json::json!({
+                            "ledger_index": hex::encode(index.as_bytes()),
+                            "account": hex::encode(preauth.account.as_bytes()),
+                            "authorize": hex::encode(preauth.authorize.as_bytes()),
+                            "flags": preauth.flags,
+                        }));
+                    } else {
+                        // Store raw data for unknown entry types
+                        other_entries.push(serde_json::json!({
+                            "ledger_index": hex::encode(index.as_bytes()),
+                            "data": hex::encode(data),
+                        }));
+                    }
+                }
+
+                // Get transaction history
+                let tx_history = app.get_tx_history();
+                let all_tx_records = tx_history.get_tx_history(0, 10000);
+                let transactions: Vec<serde_json::Value> = all_tx_records
+                    .into_iter()
+                    .map(|record| {
+                        serde_json::json!({
+                            "tx_hash": hex::encode(record.tx_hash.as_bytes()),
+                            "tx_type": format!("{:?}", record.tx_type),
+                            "ledger_seq": record.ledger_seq,
+                            "timestamp": record.timestamp,
+                        })
+                    })
+                    .collect();
+
+                // Build the complete dump
+                let dump = serde_json::json!({
+                    "ledger_info": {
+                        "ledger_index": current_ledger,
+                        "ledger_hash": hex::encode(ledger_hash.as_bytes()),
+                        "dump_time": chrono::Utc::now().to_rfc3339(),
+                    },
+                    "entries": {
+                        "account_roots": account_roots,
+                        "call_states": call_states,
+                        "offers": offers,
+                        "signer_lists": signer_lists,
+                        "nicknames": nicknames,
+                        "deposit_preauths": deposit_preauths,
+                        "other_entries": other_entries,
+                    },
+                    "statistics": {
+                        "total_entries": account_roots.len() + call_states.len() + offers.len()
+                            + signer_lists.len() + nicknames.len() + deposit_preauths.len()
+                            + other_entries.len(),
+                        "account_count": account_roots.len(),
+                        "trust_line_count": call_states.len(),
+                        "offer_count": offers.len(),
+                        "signer_list_count": signer_lists.len(),
+                        "nickname_count": nicknames.len(),
+                        "deposit_preauth_count": deposit_preauths.len(),
+                        "other_entry_count": other_entries.len(),
+                        "transaction_count": transactions.len(),
+                    },
+                    "transactions": transactions,
+                    "status": "success",
+                });
+
+                Ok(dump)
+            }
+
+            // ================================================================
             // Unknown method
             // ================================================================
             _ => Err(JsonRpcError::method_not_found()),
