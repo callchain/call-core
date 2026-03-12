@@ -215,3 +215,20 @@ pub struct PeerPosition {
     pub proposal: Proposal,
     pub last_update: u64,
 }
+
+/// Status of validation quorum for a consensus round
+#[derive(Debug, Clone, Default)]
+pub struct QuorumStatus {
+    /// The configured quorum threshold percentage (e.g., 80.0)
+    pub quorum_threshold: f64,
+    /// Current agreement percentage from validators
+    pub current_agreement_pct: f64,
+    /// Whether we currently have quorum
+    pub has_quorum: bool,
+    /// Total weight of all trusted validators
+    pub trusted_validator_weight: u32,
+    /// Weight of validators agreeing with our position
+    pub agreeing_weight: u32,
+    /// Minimum weight required to achieve quorum
+    pub minimum_required_weight: u32,
+}

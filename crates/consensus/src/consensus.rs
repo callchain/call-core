@@ -1,5 +1,5 @@
 use crate::params::ConsensusParms;
-use crate::types::{ConsensusMode, ConsensusPhase, PeerPosition, Proposal, Validation};
+use crate::types::{ConsensusMode, ConsensusPhase, PeerPosition, Proposal, QuorumStatus, Validation};
 use primitives::{LedgerIndex, NodeID, UInt256};
 use std::collections::{HashMap, HashSet};
 
@@ -423,7 +423,7 @@ impl Consensus {
     }
 
     /// Check if we have consensus using weighted BFT algorithm
-    /// Requires agreement from at least 80% of validator weight
+    /// Requires agreement from at least validation_quorum% of validator weight
     pub fn have_consensus(&self) -> bool {
         if self.phase != ConsensusPhase::Establish {
             return false;
@@ -452,9 +452,91 @@ impl Consensus {
             return false;
         }
 
-        // Use weighted consensus for BFT
+        // Use weighted consensus for BFT with configurable quorum threshold
+        let quorum_threshold = self.params.validation_quorum as f64;
         let weighted_pct = state.weighted_consensus_pct(self.node_id);
-        weighted_pct >= 80.0
+        weighted_pct >= quorum_threshold
+    }
+
+    /// Check if we have validation quorum for a specific ledger hash
+    /// Requires validations from at least validation_quorum% of trusted validators
+    pub fn have_validation_quorum(&self, ledger_hash: UInt256) -> bool {
+        let state = match &self.state {
+            Some(s) => s,
+            None => return false,
+        };
+
+        let trusted_weight = state.get_trusted_weight();
+        if trusted_weight == 0 {
+            return false;
+        }
+
+        // Count weighted validations for this ledger
+        let mut validation_weight: u32 = 0;
+
+        if let Some(validations) = self.validations.get(&ledger_hash) {
+            for validation in validations {
+                // Skip faulty validators
+                if state.is_validator_faulty(&validation.node_id) {
+                    continue;
+                }
+                validation_weight = validation_weight.saturating_add(
+                    state.get_validator_weight(&validation.node_id)
+                );
+            }
+        }
+
+        // Include our own validation if we created one
+        if let Some(our_validation) = self.state.as_ref().and_then(|s| {
+            if s.our_position == Some(ledger_hash) {
+                Some(())
+            } else {
+                None
+            }
+        }) {
+            if !state.is_validator_faulty(&self.node_id) {
+                validation_weight = validation_weight.saturating_add(
+                    state.get_validator_weight(&self.node_id)
+                );
+            }
+        }
+
+        let quorum_threshold = self.params.validation_quorum as f64;
+        let validation_pct = (validation_weight as f64 / trusted_weight as f64) * 100.0;
+        validation_pct >= quorum_threshold
+    }
+
+    /// Get the validation quorum status for all competing ledgers
+    pub fn get_validation_quorum_status(&self) -> Vec<(UInt256, u32, f64)> {
+        let state = match &self.state {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
+        let trusted_weight = state.get_trusted_weight();
+        if trusted_weight == 0 {
+            return Vec::new();
+        }
+
+        let quorum_threshold = self.params.validation_quorum as f64;
+
+        self.validations
+            .iter()
+            .map(|(hash, validations)| {
+                let mut weight: u32 = 0;
+                for validation in validations {
+                    if state.is_validator_faulty(&validation.node_id) {
+                        continue;
+                    }
+                    weight = weight.saturating_add(
+                        state.get_validator_weight(&validation.node_id)
+                    );
+                }
+                let pct = (weight as f64 / trusted_weight as f64) * 100.0;
+                (*hash, weight, pct)
+            })
+            .filter(|(_, _, pct)| *pct >= quorum_threshold)
+            .collect()
     }
 
     /// Run Byzantine fault detection on current proposals
@@ -719,7 +801,13 @@ impl Consensus {
     }
 
     /// Check if close time has reached consensus using weighted voting
-    pub fn close_time_consensus(&self, threshold_pct: f64) -> bool {
+    /// Uses the configured validation_quorum as the threshold
+    pub fn close_time_consensus(&self) -> bool {
+        self.close_time_consensus_with_threshold(self.params.validation_quorum as f64)
+    }
+
+    /// Check if close time has reached consensus with a custom threshold
+    pub fn close_time_consensus_with_threshold(&self, threshold_pct: f64) -> bool {
         if let Some(state) = &self.state {
             let target_time = self.calculate_close_time();
             let trusted_weight = state.get_trusted_weight();
@@ -750,6 +838,36 @@ impl Consensus {
             agreement_pct >= threshold_pct
         } else {
             false
+        }
+    }
+
+    /// Get the configured validation quorum percentage
+    pub fn get_validation_quorum(&self) -> usize {
+        self.params.validation_quorum
+    }
+
+    /// Get the current validation quorum status
+    pub fn get_quorum_status(&self) -> QuorumStatus {
+        let state = match &self.state {
+            Some(s) => s,
+            None => return QuorumStatus::default(),
+        };
+
+        let trusted_weight = state.get_trusted_weight();
+        if trusted_weight == 0 {
+            return QuorumStatus::default();
+        }
+
+        let threshold = self.params.validation_quorum as f64;
+        let weighted_pct = state.weighted_consensus_pct(self.node_id);
+
+        QuorumStatus {
+            quorum_threshold: threshold,
+            current_agreement_pct: weighted_pct,
+            has_quorum: weighted_pct >= threshold,
+            trusted_validator_weight: trusted_weight,
+            agreeing_weight: ((weighted_pct / 100.0) * trusted_weight as f64) as u32,
+            minimum_required_weight: ((threshold / 100.0) * trusted_weight as f64) as u32,
         }
     }
 
@@ -1033,28 +1151,28 @@ mod tests {
             Proposal::new(v1, prev_ledger, UInt256::new([1u8; 32]), 1, 1000),
             1000,
         );
-        assert!(!consensus.close_time_consensus(80.0));
+        assert!(!consensus.close_time_consensus_with_threshold(80.0));
 
         // v2 disagrees (weight 5) with different close time -> still 6
         consensus.process_proposal(
             Proposal::new(v2, prev_ledger, UInt256::new([2u8; 32]), 1, 2000),
             1000,
         );
-        assert!(!consensus.close_time_consensus(80.0));
+        assert!(!consensus.close_time_consensus_with_threshold(80.0));
 
         // v3 agrees (weight 5) -> total 11 (42%)
         consensus.process_proposal(
             Proposal::new(v3, prev_ledger, UInt256::new([3u8; 32]), 1, 1000),
             1000,
         );
-        assert!(!consensus.close_time_consensus(80.0));
+        assert!(!consensus.close_time_consensus_with_threshold(80.0));
 
         // v4 agrees (weight 5) -> total 16 (62%)
         consensus.process_proposal(
             Proposal::new(v4, prev_ledger, UInt256::new([4u8; 32]), 1, 1000),
             1000,
         );
-        assert!(!consensus.close_time_consensus(80.0));
+        assert!(!consensus.close_time_consensus_with_threshold(80.0));
 
         // v5 agrees (weight 5) -> total 21 (81%)
         consensus.process_proposal(
@@ -1063,6 +1181,131 @@ mod tests {
         );
 
         // Should have close time consensus (21/26 = 81%)
-        assert!(consensus.close_time_consensus(80.0));
+        assert!(consensus.close_time_consensus_with_threshold(80.0));
+    }
+
+    #[test]
+    fn test_validation_quorum_check() {
+        let node_id = NodeID::new([0u8; 32]);
+        let params = ConsensusParms::default();
+        let mut consensus = Consensus::new(node_id, params);
+
+        // Add validators with weights
+        let v1 = NodeID::new([1u8; 32]);
+        let v2 = NodeID::new([2u8; 32]);
+        let v3 = NodeID::new([3u8; 32]);
+
+        consensus.add_validator_with_weight(v1, vec![1], None, None, true, 4);
+        consensus.add_validator_with_weight(v2, vec![2], None, None, true, 4);
+        consensus.add_validator_with_weight(v3, vec![3], None, None, true, 2);
+        // Total weight = 1 (us) + 4 + 4 + 2 = 11
+
+        let prev_ledger = UInt256::zero();
+        consensus.start_round(prev_ledger, 1);
+
+        let our_position = UInt256::new([1u8; 32]);
+        consensus.close_ledger(our_position, 0);
+
+        // Add proposals from validators
+        consensus.process_proposal(
+            Proposal::new(v1, prev_ledger, our_position, 1, 0),
+            1000,
+        );
+        consensus.process_proposal(
+            Proposal::new(v2, prev_ledger, our_position, 1, 0),
+            1000,
+        );
+
+        // We have 9/11 = 82% which is >= 80% quorum
+        assert!(consensus.have_consensus());
+
+        // Check quorum status
+        let status = consensus.get_quorum_status();
+        assert!(status.has_quorum);
+        assert_eq!(status.quorum_threshold, 80.0);
+        assert!(status.current_agreement_pct >= 80.0);
+    }
+
+    #[test]
+    fn test_validation_quorum_for_ledger() {
+        let node_id = NodeID::new([0u8; 32]);
+        let params = ConsensusParms::default();
+        let mut consensus = Consensus::new(node_id, params);
+
+        let v1 = NodeID::new([1u8; 32]);
+        let v2 = NodeID::new([2u8; 32]);
+
+        consensus.add_validator_with_weight(v1, vec![1], None, None, true, 5);
+        consensus.add_validator_with_weight(v2, vec![2], None, None, true, 5);
+        // Total weight = 1 (us) + 5 + 5 = 11
+
+        let prev_ledger = UInt256::zero();
+        consensus.start_round(prev_ledger, 1);
+
+        let our_position = UInt256::new([1u8; 32]);
+        consensus.close_ledger(our_position, 0);
+
+        // Initially no validation quorum
+        assert!(!consensus.have_validation_quorum(our_position));
+
+        // Add validations
+        consensus.process_validation(Validation::new(v1, 2, our_position, 0));
+        consensus.process_validation(Validation::new(v2, 2, our_position, 0));
+
+        // Now we should have validation quorum (11/11 = 100%)
+        assert!(consensus.have_validation_quorum(our_position));
+    }
+
+    #[test]
+    fn test_validation_quorum_status_empty() {
+        let node_id = NodeID::new([0u8; 32]);
+        let params = ConsensusParms::default();
+        let consensus = Consensus::new(node_id, params);
+
+        // Without starting a round, status should be default
+        let status = consensus.get_quorum_status();
+        assert!(!status.has_quorum);
+        assert_eq!(status.quorum_threshold, 0.0);
+        assert_eq!(status.trusted_validator_weight, 0);
+    }
+
+    #[test]
+    fn test_close_time_consensus_default_threshold() {
+        let node_id = NodeID::new([0u8; 32]);
+
+        // Create params with 66% quorum
+        let params = ConsensusParms {
+            validation_quorum: 66,
+            ..Default::default()
+        };
+
+        let mut consensus = Consensus::new(node_id, params);
+
+        let v1 = NodeID::new([1u8; 32]);
+        let v2 = NodeID::new([2u8; 32]);
+
+        // Add validators with equal weight
+        consensus.add_validator_with_weight(v1, vec![1], None, None, true, 5);
+        consensus.add_validator_with_weight(v2, vec![2], None, None, true, 5);
+        // Total weight = 1 + 5 + 5 = 11
+        // 66% of 11 = 7.26, so we need 8 weight
+
+        let prev_ledger = UInt256::zero();
+        consensus.start_round(prev_ledger, 1);
+        consensus.close_ledger(UInt256::new([1u8; 32]), 1000);
+
+        // Only v1 agrees (weight 6 including us) - not enough for 66%
+        consensus.process_proposal(
+            Proposal::new(v1, prev_ledger, UInt256::new([1u8; 32]), 1, 1000),
+            1000,
+        );
+        assert!(!consensus.close_time_consensus());
+
+        // v2 also agrees (weight 11) - enough for 66%
+        consensus.process_proposal(
+            Proposal::new(v2, prev_ledger, UInt256::new([1u8; 32]), 1, 1000),
+            1000,
+        );
+        assert!(consensus.close_time_consensus());
     }
 }

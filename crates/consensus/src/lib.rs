@@ -10,4 +10,4 @@ pub use consensus::{Consensus, ConsensusState, ValidatorInfo};
 pub use fee_vote::{FeeVote, FeeVoting};
 pub use params::ConsensusParms;
 pub use round::{ConsensusRound, ConsensusRoundManager};
-pub use types::{ConsensusMode, ConsensusPhase, PeerPosition, Proposal, Validation};
+pub use types::{ConsensusMode, ConsensusPhase, PeerPosition, Proposal, QuorumStatus, Validation};

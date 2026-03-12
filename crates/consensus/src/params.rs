@@ -22,7 +22,7 @@ impl Default for ConsensusParms {
             ledger_min_consensus: 2,
             ledger_max_consensus: 50,
             ledger_min_consensus_pct: 66,  // 66% for fast 3-node devnet consensus
-            validation_quorum: 2,          // Only need 2 validators for devnet
+            validation_quorum: 80,         // 80% quorum for BFT consensus
             amendment_quorum: 2,
             min_propose_time: 1,           // Propose solutions faster
             max_propose_time: 10,          // Cap proposal time
