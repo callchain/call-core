@@ -494,6 +494,7 @@ impl RpcHandler for AppRpcHandler {
             "server_state" => {
                 let app = self.app.read().await;
                 let ledger_index = app.consensus.get_ledger_index();
+                let server_state_str = format!("{:?}", app.get_state()).to_lowercase();
                 Ok(serde_json::json!({
                     "info": {
                         "build_version": "0.1.0",
@@ -501,7 +502,7 @@ impl RpcHandler for AppRpcHandler {
                         "io_latency_ms": 1,
                         "load_factor": 1,
                         "peers": app.overlay.active_peer_count(),
-                        "server_state": "full",
+                        "server_state": server_state_str,
                         "state_accounting": {
                             "connected": {"duration_us": "0", "transitions": 0},
                             "disconnected": {"duration_us": "0", "transitions": 0},

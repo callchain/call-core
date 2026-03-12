@@ -640,6 +640,7 @@ async fn handle_server_info(app: &ApplicationHandle, id: Option<u64>) -> WsRespo
     let app_guard = app.read().await;
     let ledger_index = app_guard.get_current_ledger_seq();
     let ledger_hash = app_guard.get_current_ledger_hash();
+    let server_state_str = format!("{:?}", app_guard.get_state()).to_lowercase();
     let info = serde_json::json!({
         "info": {
             "build_version": "0.1.0",
@@ -647,7 +648,7 @@ async fn handle_server_info(app: &ApplicationHandle, id: Option<u64>) -> WsRespo
             "io_latency_ms": 1,
             "load_factor": 1,
             "peers": app_guard.overlay.active_peer_count(),
-            "server_state": "full",
+            "server_state": server_state_str,
             "state_accounting": {
                 "connected": {"duration_us": "0", "transitions": 0},
                 "disconnected": {"duration_us": "0", "transitions": 0},

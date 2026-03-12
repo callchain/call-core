@@ -1091,8 +1091,14 @@ impl Application {
         // Initialize consensus
         self.initialize_consensus().await?;
 
-        self.set_state(NodeState::Full);
-        info!("Node is now operational");
+        // Set state based on validator configuration
+        if self.config.is_validator() {
+            self.set_state(NodeState::Proposing);
+            info!("Node is now operational (validator - proposing)");
+        } else {
+            self.set_state(NodeState::Full);
+            info!("Node is now operational (full node - observing)");
+        }
 
         Ok(())
     }
@@ -2223,7 +2229,7 @@ impl Application {
                 "io_latency_ms": 1,
                 "load_factor": self.tx_queue.len().max(1) as u32,
                 "peers": peer_count,
-                "server_state": format!("{:?}", self.state),
+                "server_state": format!("{:?}", self.state).to_lowercase(),
                 "state_accounting": {
                     "connected": {"duration_us": "0", "transitions": 0},
                     "disconnected": {"duration_us": "0", "transitions": 0},
