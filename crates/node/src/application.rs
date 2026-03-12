@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::rpc::{RpcConfig, RpcServer, AppRpcHandler};
+use crate::websocket::{WebSocketConfig, WebSocketServer};
 use consensus::{Consensus, ConsensusParms, ConsensusMode, ConsensusPhase};
 use network::Overlay;
 use primitives::{AccountID, NodeID, UInt256};
@@ -117,6 +118,10 @@ pub struct Application {
     pub rpc_config: RpcConfig,
     rpc_shutdown_tx: Option<watch::Sender<bool>>,
     rpc_handle: Option<JoinHandle<()>>,
+    /// WebSocket configuration
+    pub websocket_config: WebSocketConfig,
+    websocket_shutdown_tx: Option<watch::Sender<bool>>,
+    websocket_handle: Option<JoinHandle<()>>,
     last_consensus_tick: std::time::Instant,
     /// Current ledger info
     current_ledger_hash: primitives::UInt256,
@@ -719,6 +724,14 @@ impl Application {
             admin_enabled: config.rpc_admin_enabled,
         };
 
+        // Initialize WebSocket config
+        let websocket_config = WebSocketConfig {
+            enabled: config.websocket.enabled,
+            bind_address: config.websocket.bind_address.clone(),
+            port: config.websocket.port,
+            max_connections: config.websocket.max_connections,
+        };
+
         // Initialize ledger state
         let ledger_state = protocol::LedgerState::new();
 
@@ -783,6 +796,9 @@ impl Application {
             rpc_config,
             rpc_shutdown_tx: None,
             rpc_handle: None,
+            websocket_config,
+            websocket_shutdown_tx: None,
+            websocket_handle: None,
             last_consensus_tick: std::time::Instant::now(),
             current_ledger_hash: primitives::UInt256::zero(),
             current_ledger_seq: 0,
@@ -1165,6 +1181,16 @@ impl Application {
                 // Clone handle for RPC server
                 let handle_for_rpc = Arc::clone(&app_handle);
                 app.start_rpc_server(handle_for_rpc).await?;
+            }
+        }
+
+        // Start WebSocket server if enabled
+        {
+            let mut app = app_handle.write().await;
+            if app.websocket_config.enabled {
+                // Clone handle for WebSocket server
+                let handle_for_ws = Arc::clone(&app_handle);
+                app.start_websocket_server(handle_for_ws).await?;
             }
         }
 
@@ -1584,6 +1610,34 @@ impl Application {
         self.rpc_handle = Some(handle);
 
         info!("RPC server started on http://{}", bind_addr);
+        Ok(())
+    }
+
+    /// Start the WebSocket server
+    async fn start_websocket_server(&mut self, app_handle: ApplicationHandle) -> anyhow::Result<()> {
+        if !self.websocket_config.enabled {
+            return Ok(());
+        }
+
+        let bind_addr = format!("{}:{}", self.websocket_config.bind_address, self.websocket_config.port);
+        info!("Starting WebSocket server on {}", bind_addr);
+
+        // Create WebSocket server with the application handle
+        let ws_server = WebSocketServer::new(self.websocket_config.clone(), app_handle);
+
+        // Create shutdown channel
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        self.websocket_shutdown_tx = Some(shutdown_tx);
+
+        // Start WebSocket server in background task
+        let handle = tokio::spawn(async move {
+            if let Err(e) = ws_server.run(shutdown_rx).await {
+                warn!("WebSocket server error: {}", e);
+            }
+        });
+        self.websocket_handle = Some(handle);
+
+        info!("WebSocket server started on ws://{}", bind_addr);
         Ok(())
     }
 
@@ -2245,6 +2299,17 @@ impl Application {
         debug!("Saving state to database...");
         if let Err(e) = self.persist_state().await {
             warn!("Failed to persist state: {}", e);
+        }
+
+        // Stop WebSocket server
+        if let Some(shutdown_tx) = self.websocket_shutdown_tx.take() {
+            info!("Stopping WebSocket server...");
+            let _ = shutdown_tx.send(true);
+        }
+
+        // Wait for WebSocket server to stop
+        if let Some(handle) = self.websocket_handle.take() {
+            let _ = tokio::time::timeout(tokio::time::Duration::from_secs(5), handle).await;
         }
 
         // Stop RPC server

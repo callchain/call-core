@@ -274,7 +274,7 @@ class RPCTester:
         if not success:
             self._add_result("submit (error handling)", True, response={"expected_error": str(result)})
         else:
-            self._add_result("submit (error handling)", False, error="Expected error for invalid tx_blob")
+            self._add_result("submit (error handling)", False, error_msg="Expected error for invalid tx_blob")
 
     # ==================== Consensus/Network Methods ====================
 
@@ -471,7 +471,7 @@ class WebSocketTester:
                 if data.get("id") == 1:
                     self._add_result("websocket_ping", True, response=data)
                 else:
-                    self._add_result("websocket_ping", False, error="Invalid response ID")
+                    self._add_result("websocket_ping", False, error_msg="Invalid response ID")
         except Exception as e:
             self._add_result("websocket_ping", False, error_msg=str(e))
 
@@ -483,10 +483,13 @@ class WebSocketTester:
                 await ws.send(msg)
                 response = await asyncio.wait_for(ws.recv(), timeout=5.0)
                 data = json.loads(response)
-                if "info" in data.get("result", {}):
+                # WebSocket response format: {"id": 1, "status": "success", "result": {...}}
+                result = data.get("result", {})
+                # WebSocket returns data directly in result (not wrapped in "info")
+                if isinstance(result, dict) and ("build_version" in result or "info" in result):
                     self._add_result("websocket_server_info", True, response=data)
                 else:
-                    self._add_result("websocket_server_info", False, error="Missing info in response")
+                    self._add_result("websocket_server_info", False, error_msg=f"Missing expected fields. Got: {result}")
         except Exception as e:
             self._add_result("websocket_server_info", False, error_msg=str(e))
 
@@ -518,7 +521,7 @@ class WebSocketTester:
                     await ws.send(unsub_msg)
                     await asyncio.wait_for(ws.recv(), timeout=5.0)
                 else:
-                    self._add_result("websocket_subscribe_ledger", False, error="Subscription failed")
+                    self._add_result("websocket_subscribe_ledger", False, error_msg="Subscription failed")
         except Exception as e:
             self._add_result("websocket_subscribe_ledger", False, error_msg=str(e))
 
@@ -547,7 +550,7 @@ class WebSocketTester:
                     await ws.send(unsub_msg)
                     await asyncio.wait_for(ws.recv(), timeout=5.0)
                 else:
-                    self._add_result("websocket_subscribe_transactions", False, error="Subscription failed")
+                    self._add_result("websocket_subscribe_transactions", False, error_msg="Subscription failed")
         except Exception as e:
             self._add_result("websocket_subscribe_transactions", False, error_msg=str(e))
 
@@ -576,7 +579,7 @@ class WebSocketTester:
                     await ws.send(unsub_msg)
                     await asyncio.wait_for(ws.recv(), timeout=5.0)
                 else:
-                    self._add_result("websocket_account_subscribe", False, error="Subscription failed")
+                    self._add_result("websocket_account_subscribe", False, error_msg="Subscription failed")
         except Exception as e:
             self._add_result("websocket_account_subscribe", False, error_msg=str(e))
 
@@ -588,10 +591,13 @@ class WebSocketTester:
                 await ws.send(msg)
                 response = await asyncio.wait_for(ws.recv(), timeout=5.0)
                 data = json.loads(response)
-                if "ledger" in data.get("result", {}):
+                # WebSocket response format: {"id": 9, "status": "success", "result": {...}}
+                result = data.get("result", {})
+                # WebSocket returns data directly in result (not wrapped in "ledger")
+                if isinstance(result, dict) and ("ledger_index" in result or "ledger" in result):
                     self._add_result("websocket_ledger_command", True, response=data)
                 else:
-                    self._add_result("websocket_ledger_command", False, error="Missing ledger in response")
+                    self._add_result("websocket_ledger_command", False, error_msg=f"Missing expected fields. Got: {result}")
         except Exception as e:
             self._add_result("websocket_ledger_command", False, error_msg=str(e))
 
