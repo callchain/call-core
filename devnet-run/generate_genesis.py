@@ -7,8 +7,13 @@ sign transactions for testing all transaction types.
 """
 
 import json
+import os
 import subprocess
 import sys
+
+# Get the project root directory (parent of devnet-run)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 def generate_wallet_from_seed(seed):
     """Generate wallet info from a seed using the calld binary."""
@@ -16,7 +21,7 @@ def generate_wallet_from_seed(seed):
         ["./target/release/calld", "validate-seed", seed],
         capture_output=True,
         text=True,
-        cwd="/Users/lando/work/call/call-core"
+        cwd=PROJECT_ROOT
     )
     # Parse the output to get address and public key
     lines = result.stdout.strip().split('\n')
@@ -49,7 +54,7 @@ def main():
             ["./target/release/calld", "validate-seed", seed],
             capture_output=True,
             text=True,
-            cwd="/Users/lando/work/call/call-core"
+            cwd=PROJECT_ROOT
         )
 
         # Parse output

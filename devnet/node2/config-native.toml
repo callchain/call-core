@@ -10,11 +10,11 @@ peers = [
     "127.0.0.1:51237",
 ]
 
-# Data directory for blockchain storage
-data_dir = "/Users/lando/work/call/call-core/devnet/node2/data"
+# Data directory for blockchain storage (relative to workspace root)
+data_dir = "devnet/node2/data"
 
-# Genesis configuration (must match stress test expectations)
-genesis_file = "/Users/lando/work/call/call-core/devnet/genesis.json"
+# Genesis configuration (relative to workspace root)
+genesis_file = "devnet/genesis.json"
 
 # Validator configuration
 validation_seed = "sEdTvJH6xms2zZ4sDqpadBP4FVsK2KXGv4PBg4Pd8QhNbmXvSRL"
