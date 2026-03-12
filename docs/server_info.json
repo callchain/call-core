@@ -83,7 +83,7 @@
                "duration_us" : "4001401",
                "transitions" : 1
             },
-            "tracking" : {
+            "proposing" : {
                "duration_us" : "1",
                "transitions" : 1
             }

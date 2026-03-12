@@ -653,7 +653,7 @@ async fn handle_server_info(app: &ApplicationHandle, id: Option<u64>) -> WsRespo
                 "disconnected": {"duration_us": "0", "transitions": 0},
                 "full": {"duration_us": "0", "transitions": 0},
                 "syncing": {"duration_us": "0", "transitions": 0},
-                "tracking": {"duration_us": "0", "transitions": 0},
+                "proposing": {"duration_us": "0", "transitions": 0},
             },
             "uptime": 0,
             "validated_ledger": {

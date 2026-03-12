@@ -507,7 +507,7 @@ impl RpcHandler for AppRpcHandler {
                             "disconnected": {"duration_us": "0", "transitions": 0},
                             "full": {"duration_us": "0", "transitions": 0},
                             "syncing": {"duration_us": "0", "transitions": 0},
-                            "tracking": {"duration_us": "0", "transitions": 0},
+                            "proposing": {"duration_us": "0", "transitions": 0},
                         },
                         "uptime": 0,
                         "validated_ledger": {
@@ -3365,7 +3365,7 @@ impl RpcHandler for SimpleRpcHandler {
                             "disconnected": {"duration_us": "0", "transitions": 0},
                             "full": {"duration_us": "0", "transitions": 0},
                             "syncing": {"duration_us": "0", "transitions": 0},
-                            "tracking": {"duration_us": "0", "transitions": 0},
+                            "proposing": {"duration_us": "0", "transitions": 0},
                         },
                         "uptime": 0,
                         "validated_ledger": null,

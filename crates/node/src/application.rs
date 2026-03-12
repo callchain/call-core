@@ -101,8 +101,8 @@ impl TransactionHistory {
 pub enum NodeState {
     Starting,
     Syncing,
-    Tracking,
     Full,
+    Proposing,
     Stopping,
     Stopped,
 }
@@ -2229,7 +2229,7 @@ impl Application {
                     "disconnected": {"duration_us": "0", "transitions": 0},
                     "full": {"duration_us": "0", "transitions": 0},
                     "syncing": {"duration_us": "0", "transitions": 0},
-                    "tracking": {"duration_us": "0", "transitions": 0},
+                    "proposing": {"duration_us": "0", "transitions": 0},
                 },
                 "uptime": 0,
                 "validated_ledger": {
