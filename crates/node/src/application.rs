@@ -691,8 +691,14 @@ impl Application {
             NodeID::new([0u8; 32])
         };
 
-        // Initialize consensus
-        let consensus = Consensus::new(node_id, ConsensusParms::default())
+        // Initialize consensus with config parameters
+        let consensus_params = ConsensusParms {
+            validation_quorum: config.consensus.validation_quorum,
+            ledger_min_consensus_pct: config.consensus.ledger_min_consensus_pct as u32,
+            ledger_min_consensus: config.consensus.ledger_min_consensus,
+            ..Default::default()
+        };
+        let consensus = Consensus::new(node_id, consensus_params)
             .with_mode(if config.validation_seed.is_some() {
                 ConsensusMode::Proposing
             } else {
@@ -2124,6 +2130,9 @@ impl Application {
             .map(|h| self.consensus.get_validation_count(h))
             .unwrap_or(0);
 
+        // Get configured validation quorum
+        let validation_quorum = self.consensus.get_validation_quorum();
+
         serde_json::json!({
             "info": {
                 "build_version": env!("CARGO_PKG_VERSION"),
@@ -2146,6 +2155,7 @@ impl Application {
                 },
                 "node_id": hex::encode(self.node_id.as_bytes()),
                 "consensus_phase": format!("{:?}", consensus_state),
+                "validation_quorum": validation_quorum,
                 "validation_count": validation_count,
                 "pending_transactions": self.tx_queue.len(),
             }

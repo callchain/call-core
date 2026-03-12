@@ -1885,7 +1885,7 @@ impl RpcHandler for AppRpcHandler {
 
                 // Get validation quorum
                 let trusted_validators = app.consensus.get_trusted_validator_count();
-                let validation_quorum = (trusted_validators * 80) / 100;
+                let validation_quorum = app.consensus.get_validation_quorum();
 
                 Ok(serde_json::json!({
                     "status": "success",
@@ -2031,17 +2031,17 @@ impl RpcHandler for AppRpcHandler {
 
                 let trusted_validators = app.consensus.get_trusted_validator_count();
                 let ledger_index = app.consensus.get_ledger_index();
-                // Default quorum is 80% of trusted validators
-                let quorum = (trusted_validators * 80) / 100;
+                // Get configured validation quorum percentage
+                let validation_quorum = app.consensus.get_validation_quorum();
 
                 Ok(serde_json::json!({
                     "status": "success",
                     "quorum": {
-                        "validation_quorum": quorum,
+                        "validation_quorum": validation_quorum,
                         "trusted_validator_count": trusted_validators,
                         "ledger_current_index": ledger_index,
                         "quorum_ratio": if trusted_validators > 0 {
-                            format!("{:.0}%", (quorum as f64 / trusted_validators as f64) * 100.0)
+                            format!("{:.0}%", (validation_quorum as f64))
                         } else {
                             "0%".to_string()
                         },

@@ -210,7 +210,7 @@ setup_native() {
       "ledgerMaxCloseTime": 20,
       "ledgerMinConsensus": 1,
       "ledgerMaxConsensus": 50,
-      "validationQuorum": 1,
+      "validationQuorum": 66,
       "minProposeTime": 3,
       "maxProposeTime": 30
     },
@@ -322,6 +322,15 @@ pre_seq_cache_max_size = 200000
 pre_seq_per_account_limit = 50000
 pre_seq_max_sequence_gap = 10000
 max_tx_per_account_per_ledger = 5000
+
+# Consensus configuration
+[consensus]
+# Validation quorum percentage (80% for BFT consensus)
+validation_quorum = 66
+# Minimum consensus percentage for ledger close
+ledger_min_consensus_pct = 66
+# Minimum validators required for consensus
+ledger_min_consensus = 1
 EOF
     done
 

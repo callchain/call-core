@@ -8,7 +8,7 @@
       "ledgerMaxCloseTime": 20,
       "ledgerMinConsensus": 1,
       "ledgerMaxConsensus": 50,
-      "validationQuorum": 1,
+      "validationQuorum": 66,
       "minProposeTime": 3,
       "maxProposeTime": 30
     },

@@ -32,6 +32,27 @@ impl Default for TransactionPoolConfig {
     }
 }
 
+/// Consensus configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsensusConfig {
+    /// Validation quorum percentage (e.g., 80 for 80%)
+    pub validation_quorum: usize,
+    /// Minimum consensus percentage for ledger close
+    pub ledger_min_consensus_pct: usize,
+    /// Minimum validators required for consensus
+    pub ledger_min_consensus: usize,
+}
+
+impl Default for ConsensusConfig {
+    fn default() -> Self {
+        Self {
+            validation_quorum: 80,
+            ledger_min_consensus_pct: 66,
+            ledger_min_consensus: 2,
+        }
+    }
+}
+
 /// Node configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -79,6 +100,10 @@ pub struct Config {
     /// Transaction pool configuration
     #[serde(default)]
     pub transaction_pool: TransactionPoolConfig,
+
+    /// Consensus configuration
+    #[serde(default)]
+    pub consensus: ConsensusConfig,
 }
 
 mod serde_socket_addr {
@@ -142,6 +167,7 @@ impl Default for Config {
             log_level: "info".to_string(),
             genesis_file: None,
             transaction_pool: TransactionPoolConfig::default(),
+            consensus: ConsensusConfig::default(),
         }
     }
 }

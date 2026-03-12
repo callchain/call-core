@@ -10,11 +10,11 @@ peers = [
     "127.0.0.1:51237",
 ]
 
-# Data directory for blockchain storage (relative to workspace root)
-data_dir = "devnet/node2/data"
+# Data directory for blockchain storage
+data_dir = "/Users/lando/work/call/call-core/devnet/node2/data"
 
-# Genesis configuration (relative to workspace root)
-genesis_file = "devnet/genesis.json"
+# Genesis configuration (must match stress test expectations)
+genesis_file = "/Users/lando/work/call/call-core/devnet/genesis.json"
 
 # Validator configuration
 validation_seed = "sEdTvJH6xms2zZ4sDqpadBP4FVsK2KXGv4PBg4Pd8QhNbmXvSRL"
@@ -42,3 +42,12 @@ pre_seq_cache_max_size = 200000
 pre_seq_per_account_limit = 50000
 pre_seq_max_sequence_gap = 10000
 max_tx_per_account_per_ledger = 5000
+
+# Consensus configuration
+[consensus]
+# Validation quorum percentage (80% for BFT consensus)
+validation_quorum = 66
+# Minimum consensus percentage for ledger close
+ledger_min_consensus_pct = 66
+# Minimum validators required for consensus
+ledger_min_consensus = 1
