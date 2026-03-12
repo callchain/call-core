@@ -688,12 +688,41 @@ impl Application {
         let database = Database::new(backend);
 
         // Generate or load node identity
-        let node_id = if let Some(_seed) = &config.validation_seed {
-            // In production, derive node_id from seed
-            NodeID::new([0u8; 32])
+        let node_id = if let Some(seed) = &config.validation_seed {
+            // Derive node_id from validation seed
+            use crypto::{PrivateKey, KeyType};
+            let private_key = if let Ok(key_bytes) = hex::decode(seed) {
+                PrivateKey::from_bytes(KeyType::Ed25519, &key_bytes)
+                    .or_else(|| PrivateKey::from_bytes(KeyType::Secp256k1, &key_bytes))
+                    .unwrap_or_else(|| {
+                        // Generate deterministic bytes from seed string
+                        use sha2::{Sha256, Digest};
+                        let mut hasher = Sha256::new();
+                        hasher.update(seed.as_bytes());
+                        let hash = hasher.finalize();
+                        PrivateKey::from_bytes(KeyType::Ed25519, &hash)
+                            .expect("Failed to create private key from hash")
+                    })
+            } else {
+                // Seed is not hex, hash it
+                use sha2::{Sha256, Digest};
+                let mut hasher = Sha256::new();
+                hasher.update(seed.as_bytes());
+                let hash = hasher.finalize();
+                PrivateKey::from_bytes(KeyType::Ed25519, &hash)
+                    .expect("Failed to create private key from hash")
+            };
+            let public_key = private_key.to_public_key();
+            let pk_bytes = public_key.as_bytes();
+            let pk_array: [u8; 32] = pk_bytes.try_into()
+                .expect("Public key should be 32 bytes");
+            NodeID::new(pk_array)
         } else {
             // Generate random node_id
-            NodeID::new([0u8; 32])
+            let mut random_bytes = [0u8; 32];
+            use rand::RngCore;
+            rand::thread_rng().fill_bytes(&mut random_bytes);
+            NodeID::new(random_bytes)
         };
 
         // Initialize consensus with config parameters
